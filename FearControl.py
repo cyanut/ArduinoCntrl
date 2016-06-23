@@ -693,7 +693,8 @@ def runExperiment():
 				prevTimeStart = timeStart
 				break
 		except NameError:
-			time.sleep(0.00001)
+			pass
+		time.sleep(0.00001)
 	sendToArduino(pack("<B",1))
 	while True:
 		try:
@@ -1093,7 +1094,8 @@ class readThread(threading.Thread):
 					prevTimeStart2 = timeStart
 					break
 			except NameError:
-				time.sleep(0.00001)
+				pass
+			time.sleep(0.00001)
 		sdrMissed = 0
 		ljSaveName = "["+expName+"]-"+getDay(3)
 		f = open(resultsDir+ljSaveName+".csv","w")
