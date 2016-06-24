@@ -687,6 +687,7 @@ def run_setup(settings):
 def runExperiment():
 	global packet, tone_pack, out_pack, pwm_pack, num_loops, mainLoopbrk, reset, resultsDir, ljSaveName, cameraSaveName, runDone
 	stopLoop = 0
+	sendToArduino(pack("<B",1))
 	while True:
 		print "\n"*40+"#"*10
 		print "The experiment has started."
@@ -744,9 +745,8 @@ def runExperiment():
 			num_loops += 1
 			break
 		print gfxBar(1)
-		print "The experiment has ended.\n[ARDUINO REPORT]"
-		print "Experiment on %s, from [%s] to [%s]" % (getDay(),startRTC,endRTC)
-		print "Arduino millisecond counter returns exactly [%s ms]." % (endMillis)
+		print "The experiment has ended."
+		print "Arduino reports exactly [%s ms], from [%s] to [%s]." % (endMillis, startRTC, endRTC)
 		print "#"*10
 		runDone = 1
 		break
@@ -1023,38 +1023,73 @@ class StreamDataReader(object):
     def __init__(self, device):
         self.device = device
         self.data = Queue.Queue()
-        self.dataCount = 0
+        self.dataCountMain = 0
+        self.dataCountAux1 = 0
+        self.dataCountAux2 = 0
         self.running = False
     def readStreamData(self):
-    	global timeStart, packet, nCh, runDone
-    	global sdrTotal, sdrMissed, runTime, finalSmplFreq, finalScanFreq
+        global timeStart, packet, nCh, runDone, timeStartRead
+        global sdrMissed, beforeStart, runTime, afterStop, ttlRunTime
+        global sdrTotalAux1, sdrTotalAux2, sdrTotalMain, sdrTotal
+        global finalSmplFreq, finalScanFreq, finalSmplFreqExp, finalScanFreqExp
         self.running = True
         self.device.streamStart()
+        timeStartRead = datetime.now()
+        while True:
+            returnDict = self.device.streamData(convert = False).next()
+            self.data.put_nowait(copy.deepcopy(returnDict))
+            self.dataCountAux1 += 1
+            if self.dataCountAux1 >= SMALL_REQUEST:
+                break
         timeStart = datetime.now()
-        sendToArduino(pack("<B",1))
+        while True:
+            returnDict = self.device.streamData(convert = False).next()
+            self.data.put_nowait(copy.deepcopy(returnDict))
+            self.dataCountMain += 1
+            if self.dataCountMain >= MAX_REQUESTS:
+                break
+        stop = datetime.now()
         while self.running:
             returnDict = self.device.streamData(convert = False).next()
             self.data.put_nowait(copy.deepcopy(returnDict))
-            self.dataCount += 1
-            if self.dataCount >= MAX_REQUESTS:
+            self.dataCountAux2 += 1
+            if self.dataCountAux2 >= SMALL_REQUEST:
                 self.running = False
-        stop = datetime.now()
+        stopRead = datetime.now()
         self.device.streamStop()
         self.device.close()
-        sdrTotal = self.dataCount * self.device.packetsPerRequest * self.device.streamSamplesPerPacket
+        #Total Samples Taken for each interval
+        multiplier =  self.device.packetsPerRequest * self.device.streamSamplesPerPacket
+        sdrTotalAux1 = (self.dataCountAux1)*multiplier
+        sdrTotalMain = (self.dataCountMain)*multiplier
+        sdrTotalAux2 = (self.dataCountAux2)*multiplier
+        sdrTotal = sdrTotalAux1+sdrTotalMain+sdrTotalAux2
+        #Total run times for each interval
         runTime = float((stop-timeStart).seconds*1000) + float((stop-timeStart).microseconds)/1000
-        finalSmplFreq = int(round(float(sdrTotal)*1000/(runTime)))
-        finalScanFreq = int(round(float(sdrTotal)*1000/(nCh*runTime)))
+        beforeStart = float((timeStart-timeStartRead).seconds*1000) + float((timeStart-timeStartRead).microseconds)/1000
+        afterStop = float((stopRead-stop).seconds*1000) + float((stopRead-stop).microseconds)/1000
+        ttlRunTime = float((stopRead-timeStartRead).seconds*1000) + float((stopRead-timeStartRead).microseconds)/1000
+        #Real sampling frequency for experiment and for entire duration
+        finalSmplFreq = int(round(float(sdrTotal)*1000/(ttlRunTime)))
+        finalScanFreq = int(round(float(sdrTotal)*1000/(nCh*ttlRunTime)))
+        finalSmplFreqExp = int(round(float(sdrTotalMain)*1000/(runTime)))
+        finalScanFreqExp = int(round(float(sdrTotalMain)*1000/(nCh*runTime)))
         while True:
         	warning = False
         	if sdrMissed != 0:
         		warning = True
 	        if runDone == 1:
 	        	#Uncomment the following to see LJ Diagnostics, if needed.
-	        	print "\n"+"#"*10+"\n[LABJACK REPORT]"
-		        print "[%s] Samples were taken and [%s] Samples were lost due to LabJack errors." % (sdrTotal, sdrMissed)
-		        print "The experiment took [%s +/- 0.001s]" % (float(int(runTime))/1000)
-		        print "Actual sampling frequency is [%s]Hz, or [%s]Hz per Channel" % (finalSmplFreq, finalScanFreq)
+	        	print "\n"+"#"*10+"\n[LABJACK REPORT]\n(this information is also saved in your data file)"
+	        	print "__________________________________________________________________"
+	        	print "                  | BEFORE | DURING EXPERIMENT | AFTER  |  TOTAL |"
+	        	print "          TIME (s)|%s|     %s     |%s|%s|" % (printDigits(float(int(beforeStart))/1000,8),printDigits(float(int(runTime))/1000,9),
+	        		printDigits(float(int(afterStop))/1000,8),printDigits(float(int(ttlRunTime))/1000,8))
+	        	print "     SAMPLES TAKEN|%s|     %s     |%s|%s|" % (printDigits(sdrTotalAux1,8),printDigits(sdrTotalMain,9),printDigits(sdrTotalAux2,8),printDigits(sdrTotal,8))
+	        	print "SAMPLING FREQ (Hz)|        |     %s     |        |%s|" % (printDigits(finalSmplFreqExp,9),printDigits(finalSmplFreq,8))
+	        	print "    SCAN FREQ (Hz)|        |     %s     |        |%s|" % (printDigits(finalScanFreqExp,9),printDigits(finalScanFreq,8))
+		        print "------------------------------------------------------------------"
+		        print "*(Camera and Arduino are only on DURING_EXPERIMENT)"
 		        print "#"*10
 		        if warning:
 		        	print
@@ -1072,7 +1107,9 @@ class readThread(threading.Thread):
 		self.sdr = sdr
 	def run(self):
 		global chNum, nCh, ljSaveName, runDone, expName
-		global sdrTotal, sdrMissed, runTime, finalSmplFreq, finalScanFreq
+		global sdrMissed, beforeStart, runTime, afterStop, ttlRunTime
+		global sdrTotalAux1, sdrTotalAux2, sdrTotalMain, sdrTotal
+		global finalSmplFreq, finalScanFreq, finalSmplFreqExp, finalScanFreqExp
 		sdrMissed = 0
 		ljSaveName = "["+expName+"]-"+getDay(3)
 		f = open(resultsDir+ljSaveName+".csv","w")
@@ -1110,7 +1147,13 @@ class readThread(threading.Thread):
 		f.close()
 		while True:
 			if runDone == 2:
-				stats = "Total Samples,Total Missed Samples,Run Time (ms),Actual Sampling Freq (Hz),Actual Sampling Freq/Channel (Hz)\n%s,%s,%s,%s,%s\n" % (sdrTotal, sdrMissed, runTime, finalSmplFreq, finalScanFreq)
+				topLine = " , BEFORE EXP, DURING EXP, AFTER EXP, TOTAL,\n"
+				timeLine = "TIME (s),%s,%s,%s,%s,\n" % (printDigits(float(int(beforeStart))/1000,8),printDigits(float(int(runTime))/1000,9),
+	        		printDigits(float(int(afterStop))/1000,8),printDigits(float(int(ttlRunTime))/1000,8))
+				samplesLine = "SAMPLES TAKEN,%s,%s,%s,%s,\n" % (printDigits(sdrTotalAux1,8),printDigits(sdrTotalMain,9),printDigits(sdrTotalAux2,8),printDigits(sdrTotal,8))
+				smplFreqLine = "SAMPLING FREQ (HZ), ,%s, ,%s,\n" % (printDigits(finalSmplFreqExp,9),printDigits(finalSmplFreq,8))
+				scanFreqLine = "SCAN FREQ (HZ), ,%s, ,%s,\n" % (printDigits(finalScanFreqExp,9),printDigits(finalScanFreq,8))
+				stats = topLine+timeLine+samplesLine+smplFreqLine+scanFreqLine
 				with file(resultsDir+ljSaveName+".csv", "r") as original: data = original.read()
 				with file(resultsDir+ljSaveName+".csv", "w") as modified: modified.write(stats + data)
 				break
@@ -1121,8 +1164,8 @@ def plotData():
 	from plotly.graph_objs import Scatter, Layout, Figure
 	import plotly.plotly as py
 	import plotly.graph_objs as go
-	global runTime
-	totalScans = -3
+	global ttlRunTime
+	totalScans = -6
 	with open(resultsDir+ljSaveName+".csv") as fil:
 		for line in fil:
 			if line.strip():
@@ -1134,7 +1177,7 @@ def plotData():
 	name = f.readline()[:-1].split(",")
 	for i in range(nCh):
 		axisSignal[i] = []
-	timeSeg = float(float(runTime)/1000)/totalScans
+	timeSeg = float(float(ttlRunTime)/1000)/totalScans
 	for i in range(totalScans):
 		axisTime.append(i*timeSeg)
 		hold = f.readline()[:-1].split(",")
@@ -1166,14 +1209,15 @@ def cameraSetup():
     c.set_video_mode_and_frame_rate(fc2.VIDEOMODE_640x480Y8, fc2.FRAMERATE_30)
     p = c.get_property(fc2.FRAME_RATE)
     c.set_property(**p)
-    c.set_strobe_mode(3, True, 1, 0, 10)
     c.start_capture()
     return c
 def cameraRecord(name,c,numFrames):
+    c.set_strobe_mode(3, True, 1, 0, 10)
     c.openAVI(name, frate=30, bitrate=1000000)
     for i in range(numFrames):
         c.appendAVI()
     c.closeAVI()
+    c.set_strobe_mode(3, False, 1, 0, 10)
 def cameraClose(c):
     c.stop_capture()
     c.disconnect()
@@ -1201,11 +1245,12 @@ startMarker, endMarker = 60, 62
 timeOffset = 3600*4 #EST = -4 hours.
 fullscreenMsg = ""
 num_loops, reset, mainLoopbrk = 0, 0, 0
-prevTimeStart = datetime.now()
+prevTimeStart, prevTimeStartRead = datetime.now(), datetime.now()
+timeStart, timeStartRead = copy.deepcopy(prevTimeStart), copy.deepcopy(prevTimeStartRead)
 runDone = 0
 ####################
 #LABJACK VARIABLES
-MAX_REQUESTS = 0
+MAX_REQUESTS, SMALL_REQUEST = 0, 0
 nCh = 0
 chNum = [] 
 chOpt = [] 
@@ -1365,6 +1410,7 @@ while mainLoopbrk == 0:
 		dataReading = readThread(sdr)
 		cameraRun = cameraThread()
 		MAX_REQUESTS = int(math.ceil((float(scanFreq*nCh*packet[3]/1000)/float(packsPerReq*smplsPerPack))))
+		SMALL_REQUEST = int(round((float(scanFreq*nCh*0.5)/float(packsPerReq*smplsPerPack))))
 		#USER TRIGGER
 		raw_input("Press 'Enter' To Begin ")
 		#RUN
@@ -1373,15 +1419,16 @@ while mainLoopbrk == 0:
 			runDone = 0
 			sdrThread.start()
 			while True:
-				try:
-					timeStart
-					if timeStart != prevTimeStart:
-						prevTimeStart = timeStart
-						break
-				except NameError:
-					pass
+				if timeStartRead != prevTimeStartRead:
+					prevTimeStartRead = timeStartRead
+					break
 				time.sleep(0.00001)
 			dataReading.start()
+			while True:
+				if timeStart != prevTimeStart:
+					prevTimeStart = timeStart
+					break
+				time.sleep(0.00001)
 			cameraRun.start()
 			runExperiment()
 	#except (LabJackPython.NullHandleException, LabJackPython.LabJackException):
