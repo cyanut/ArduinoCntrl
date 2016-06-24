@@ -13,6 +13,13 @@
 boolean askForData = true; //Request New Data
 unsigned long startTime; //Use millis() at end of setup() to ensure time counting starts at beginning of loop()
 unsigned long startMicros; //Use micros() at end of setup() to ensure time counting starts at start of loop() for pwm.
+struct smallTime {
+  byte hours;
+  byte minutes;
+  byte seconds;
+}; //store time as HH:MM:SS
+smallTime startATime; //Send time to PC at end of exp to ensure fast entry of loop
+smallTime endATime;
 int i = 0; //print end message once
 //##############################################################################
 
@@ -56,7 +63,7 @@ union pcTone {
   toneData data;
   byte pctoneData[10];
 };
-pcTone pcToneData[15];
+pcTone pcToneData[12];
 byte toneDataStore[10];
 //#######################################
 
@@ -112,7 +119,7 @@ void setup(){
   //#######################################
   //GET THE TIME
   requestData();
-  delay(100);
+  delay(150);
       if (Serial.available() < 4){
         return;
       }
@@ -127,7 +134,7 @@ void setup(){
   //#######################################
   //INITIALIZING DATA
   requestData();
-  delay(100); //Allow small delay for data to arrive
+  delay(150); //Allow small delay for data to arrive
     //RECEIVE AND STORE IN DATA STRUCT
       if (Serial.available() < 12) {
          return;
@@ -145,7 +152,7 @@ void setup(){
    //TONE DATA
    for (int i=0; i<pcSetupData.data.num_tones;i++){
      requestData();
-     delay(100);
+     delay(150);
          if (Serial.available() < 10) {
              return;
          }
@@ -164,7 +171,7 @@ void setup(){
    byte prevState = B0;
    for (int i=0; i<pcSetupData.data.num_outd07; i++){
      requestData();
-     delay(100);
+     delay(150);
          if (Serial.available() < 5) {
              return;
          }
@@ -184,7 +191,7 @@ void setup(){
    //PWM/FREQ MODULATION DATA (on B register)
    for (int i=0; i<pcSetupData.data.num_pwmb813; i++){
      requestData();
-     delay(100);
+     delay(150);
        if (Serial.available() < 25) {
            return;
        }
@@ -210,16 +217,14 @@ void setup(){
       break;
     }
     else {
-      delay(50);
+      delay(5);
       continue;
     }
    }
    //Timestamp current time from Arduino
-   Serial.print("<");
-   Serial.print(millis());
-   Serial.print(",");
-   ardTime();
-   Serial.print(">");
+   startATime.hours = hour();
+   startATime.minutes = minute();
+   startATime.seconds = second();
    //Almost done
    startMicros = micros();
    startTime = millis();//Use startTime as reference instead of millis()
@@ -293,10 +298,23 @@ void loop() {
   //FINISHING EXPERIMENT AND REPORTING TIME.
   if (millis()-startTime >= pcSetupData.data.total_time) {
      if (i == 0) {
+       endATime.hours = hour();
+       endATime.minutes = minute();
+       endATime.seconds = second();
        Serial.print("<");
        Serial.print(millis()-startTime);
        Serial.print(",");
-       ardTime();
+       printDigits(startATime.hours);
+       Serial.print(':');
+       printDigits(startATime.minutes);
+       Serial.print(':');
+       printDigits(startATime.seconds);
+       Serial.print(",");
+       printDigits(endATime.hours);
+       Serial.print(':');
+       printDigits(endATime.minutes);
+       Serial.print(':');
+       printDigits(endATime.seconds);
        Serial.print(">");
        i++;
       }
@@ -332,19 +350,8 @@ void loop() {
   //#######################################
   
   //#######################################
-  //Time from Arduino
-  void ardTime(){
-    printDigits(hour());
-    Serial.print(':');
-    printDigits(minute());
-    Serial.print(':');
-    printDigits(second());
-  }
-  //#######################################
-  
-  //#######################################
   //Prints minutes and seconds with 2 spaces
-  void printDigits(int digits){
+  void printDigits(byte digits){
     if (digits < 10) {
       Serial.print("0");
     }
