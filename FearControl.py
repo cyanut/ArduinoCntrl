@@ -5,6 +5,7 @@ from u6 import U6
 from operator import itemgetter
 from datetime import datetime
 import numpy as np
+import flycapture2a as fc2
 ####################
 #TIME OUT DECORATORS
 def cdquit(fn_name):
@@ -790,6 +791,7 @@ def runExperiment():
 			break
 		elif user_stop == "n":
 			mainLoopbrk = 1
+			cameraClose(cameraCtx)
 			print "\n"*40+"Finished."
 			break
 		else:
@@ -1182,7 +1184,24 @@ def plotData():
 		{"data": data,
 		"layout": layout})
 ####################
-
+#CAMERA FUNCTION
+def cameraSetup():
+    c = fc2.Context()
+    c.connect(*c.get_camera_from_index(0))
+    c.set_video_mode_and_frame_rate(fc2.VIDEOMODE_640x480Y8, fc2.FRAMERATE_30)
+    p = c.get_property(fc2.FRAME_RATE)
+    c.set_property(**p)
+    c.set_strobe_mode(2, True, 1, 0, 10)
+    c.start_capture()
+    return c
+def cameraRecord(name,c):
+    c.openAVI("desktop/"+name, 30, 1000000)
+    for i in range(200):
+        c.appendAVI()
+    c.closeAVI()
+def cameraClose(c):
+    c.stop_capture()
+    c.disconnect()
 ##############################################################################################################
 #=================================================PROGRAM====================================================#
 ##############################################################################################################
@@ -1272,7 +1291,7 @@ while saveDirLoop1 == 0:
 				while saveDirLoop3 == 0:
 					ask_ovrWrt = raw_input("\nType (Y/N) To continue: ")
 					if ask_ovrWrt == "y":
-						resultsDir = saveDir+askNewDir+"/"+getDay(2)+"/"
+						preresultsDir = saveDir+askNewDir+"/"+getDay(2)+"/"
 						print "\nDirectory selected."
 						raw_input("Press [enter] to Continue.")
 						saveDirLoop2 = 1
@@ -1283,7 +1302,7 @@ while saveDirLoop1 == 0:
 					else:
 						print "\n\nTry again."
 			elif askNewDir not in saveDirList:
-				resultsDir = saveDir+askNewDir+"/"+getDay(2)+"/"
+				preresultsDir = saveDir+askNewDir+"/"+getDay(2)+"/"
 				print "\nNew save directory created."
 				raw_input("Press [enter] to Continue:")
 				break
@@ -1292,7 +1311,7 @@ while saveDirLoop1 == 0:
 		try:
 			askResultsDir = int(askResultsDir)
 			if askResultsDir in range(len(saveDirList)):
-				resultsDir = saveDir+saveDirList[askResultsDir]+"/"+getDay(2)+"/"
+				preresultsDir = saveDir+saveDirList[askResultsDir]+"/"+getDay(2)+"/"
 				print "\nDirectory selected."
 				raw_input("Press [enter] to Continue.")
 				break
@@ -1300,8 +1319,8 @@ while saveDirLoop1 == 0:
 				print "Try Again."
 		except ValueError:
 			print "\nPlease select a number to choose your directory."
-if not os.path.exists(resultsDir):
-	os.makedirs(resultsDir)
+if not os.path.exists(preresultsDir):
+	os.makedirs(preresultsDir)
 ####################
 #SETTING SERIAL PORT
 f = open(prgmDir+"settings.txt","r")
@@ -1314,12 +1333,17 @@ scanFreq = int(holdr[2])
 nCh, chOpt = len(chNum), [0]*len(chNum)
 f.close()
 ####################
-#SETUP LABJACK DAQ
+#SETUP LABJACK DAQ and PTGREY CAMERA
+cameraCtx = cameraSetup()
 setupLabJack()
 nCh, chOpt = len(chNum), [0]*len(chNum)
 ####################
 #MAIN PROGRAM LOOP
 while mainLoopbrk == 0:
+	####################
+	#SAVE FOLDER FOR EACH TRIAL (group LJack output and videos together)
+	resultsDir = preresultsDir+"Trial at ["+getDay(3)+"]/"
+	os.makedirs(resultsDir)
 	####################
 	#TO SETUP OR NOT TO SETUP
 	if num_loops == 0:
