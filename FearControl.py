@@ -685,33 +685,12 @@ def run_setup(settings):
 		pass
 	expName = raw_input("\n>>>Give this trial an identifying name (e.g. HRHR; GCaMP-1; etc.):\n")
 def runExperiment():
-	global packet, tone_pack, out_pack, pwm_pack, num_loops, mainLoopbrk, reset, resultsDir, ljSaveName, timeStart, prevTimeStart, runDone
+	global packet, tone_pack, out_pack, pwm_pack, num_loops, mainLoopbrk, reset, resultsDir, ljSaveName, cameraSaveName, runDone
 	stopLoop = 0
 	while True:
-		try:
-			timeStart
-			if timeStart != prevTimeStart:
-				prevTimeStart = timeStart
-				break
-		except NameError:
-			pass
-		time.sleep(0.00001)
-	sendToArduino(pack("<B",1))
-	while True:
-		try:
-			ardMsg1 = recvFromArduino()
-			startMillis = ardMsg1.split(",")[0]
-			startRTC = ardMsg1.split(",")[1]
-		except serial.serialutil.SerialException:
-			print gfxBar(2)
-			print "[ATTN]:The Arduino seems to have disconnected."
-			raw_input("Reconnect the hardware and press [enter] to try again: ")
-			stopLoop, reset = 1, 1
-			num_loops += 1
-			break
 		print "\n"*40+"#"*10
 		print "The experiment has started."
-		print "Current Arduino Time is [%s %s]; Arduino millisecond counter returns [%sms]; this counter has been reset to 0ms." % (getDay(),startRTC,startMillis)
+		print "Arduino millisecond counter has been reset to [0ms]."
 		print gfxBar()
 		###
 		#RUNNING TIMER
@@ -755,7 +734,8 @@ def runExperiment():
 		try:
 			ardMsg2 = recvFromArduino()
 			endMillis = ardMsg2.split(",")[0]
-			endRTC = ardMsg2.split(",")[1]
+			startRTC = ardMsg2.split(",")[1]
+			endRTC = ardMsg2.split(",")[2]
 		except serial.serialutil.SerialException:
 			print gfxBar(2)
 			print "[ATTN]: The Arduino was disconnected during the experiment."
@@ -764,15 +744,18 @@ def runExperiment():
 			num_loops += 1
 			break
 		print gfxBar(1)
-		print "The experiment has ended."
-		print "Current Arduino Time is [%s %s]; Arduino millisecond counter returns [%sms] since start." % (getDay(), endRTC, endMillis)
+		print "The experiment has ended.\n[ARDUINO REPORT]"
+		print "Experiment on %s, from [%s] to [%s]" % (getDay(),startRTC,endRTC)
+		print "Arduino millisecond counter returns exactly [%s ms]." % (endMillis)
 		print "#"*10
 		runDone = 1
 		break
 	while True:
 		if runDone == 2:
 			break
-	print "\n"*2+"Your data has been saved to: \n'"+resultsDir+ljSaveName+".csv'"
+	print "\n"*2+"[SAVE DIRECTORY]: '"+resultsDir+"'"
+	print "[LABJACK DATA  ]: '"+ljSaveName+".csv'"
+	print "[VIDEO OUTPUT  ]: '"+cameraSaveName+".mp4'"
 	raw_input("Press [enter] to Continue")
 	while True:
 		userPlot = raw_input("\nGraph your Data? (Y/N): ").lower()
@@ -1048,6 +1031,7 @@ class StreamDataReader(object):
         self.running = True
         self.device.streamStart()
         timeStart = datetime.now()
+        sendToArduino(pack("<B",1))
         while self.running:
             returnDict = self.device.streamData(convert = False).next()
             self.data.put_nowait(copy.deepcopy(returnDict))
@@ -1087,17 +1071,8 @@ class readThread(threading.Thread):
 		threading.Thread.__init__(self)
 		self.sdr = sdr
 	def run(self):
-		global timeStart, prevTimeStart2, chNum, nCh, ljSaveName, runDone
+		global chNum, nCh, ljSaveName, runDone, expName
 		global sdrTotal, sdrMissed, runTime, finalSmplFreq, finalScanFreq
-		while True:
-			try:
-				timeStart
-				if timeStart != prevTimeStart2:
-					prevTimeStart2 = timeStart
-					break
-			except NameError:
-				pass
-			time.sleep(0.00001)
 		sdrMissed = 0
 		ljSaveName = "["+expName+"]-"+getDay(3)
 		f = open(resultsDir+ljSaveName+".csv","w")
@@ -1191,17 +1166,25 @@ def cameraSetup():
     c.set_video_mode_and_frame_rate(fc2.VIDEOMODE_640x480Y8, fc2.FRAMERATE_30)
     p = c.get_property(fc2.FRAME_RATE)
     c.set_property(**p)
-    c.set_strobe_mode(2, True, 1, 0, 10)
+    c.set_strobe_mode(3, True, 1, 0, 10)
     c.start_capture()
     return c
-def cameraRecord(name,c):
-    c.openAVI("desktop/"+name, 30, 1000000)
-    for i in range(200):
+def cameraRecord(name,c,numFrames):
+    c.openAVI(name, frate=30, bitrate=1000000)
+    for i in range(numFrames):
         c.appendAVI()
     c.closeAVI()
 def cameraClose(c):
     c.stop_capture()
     c.disconnect()
+class cameraThread(threading.Thread):
+	def __init__(self):
+		threading.Thread.__init__(self)
+	def run(self):
+		global cameraSaveName, packet, cameraCtx, expName, resultsDir
+		cameraSaveName = "["+expName+"]-"+getDay(3)
+		numFrames = (packet[3]/1000)*30
+		cameraRecord(resultsDir+cameraSaveName, cameraCtx, numFrames)
 ##############################################################################################################
 #=================================================PROGRAM====================================================#
 ##############################################################################################################
@@ -1218,7 +1201,7 @@ startMarker, endMarker = 60, 62
 timeOffset = 3600*4 #EST = -4 hours.
 fullscreenMsg = ""
 num_loops, reset, mainLoopbrk = 0, 0, 0
-prevTimeStart, prevTimeStart2 = datetime.now(), datetime.now()
+prevTimeStart = datetime.now()
 runDone = 0
 ####################
 #LABJACK VARIABLES
@@ -1229,7 +1212,7 @@ chOpt = []
 stlFctr = 1
 ResIndx = 0
 scanFreq = 0
-ljSaveName = ""
+ljSaveName, cameraSaveName = "", ""
 ####################
 #AUTOFORMAT TERMINAL
 try:
@@ -1321,6 +1304,8 @@ while saveDirLoop1 == 0:
 			print "\nPlease select a number to choose your directory."
 if not os.path.exists(preresultsDir):
 	os.makedirs(preresultsDir)
+resultsDir = preresultsDir+"Session started at ["+getDay(3)+"]/" 
+os.makedirs(resultsDir)
 ####################
 #SETTING SERIAL PORT
 f = open(prgmDir+"settings.txt","r")
@@ -1340,10 +1325,6 @@ nCh, chOpt = len(chNum), [0]*len(chNum)
 ####################
 #MAIN PROGRAM LOOP
 while mainLoopbrk == 0:
-	####################
-	#SAVE FOLDER FOR EACH TRIAL (group LJack output and videos together)
-	resultsDir = preresultsDir+"Trial at ["+getDay(3)+"]/"
-	os.makedirs(resultsDir)
 	####################
 	#TO SETUP OR NOT TO SETUP
 	if num_loops == 0:
@@ -1382,6 +1363,7 @@ while mainLoopbrk == 0:
 		sdr = StreamDataReader(ljDAQ)
 		sdrThread = threading.Thread(target = sdr.readStreamData)
 		dataReading = readThread(sdr)
+		cameraRun = cameraThread()
 		MAX_REQUESTS = int(math.ceil((float(scanFreq*nCh*packet[3]/1000)/float(packsPerReq*smplsPerPack))))
 		#USER TRIGGER
 		raw_input("Press 'Enter' To Begin ")
@@ -1390,7 +1372,17 @@ while mainLoopbrk == 0:
 		if allowExp == 1:
 			runDone = 0
 			sdrThread.start()
+			while True:
+				try:
+					timeStart
+					if timeStart != prevTimeStart:
+						prevTimeStart = timeStart
+						break
+				except NameError:
+					pass
+				time.sleep(0.00001)
 			dataReading.start()
+			cameraRun.start()
 			runExperiment()
 	#except (LabJackPython.NullHandleException, LabJackPython.LabJackException):
 	#	print gfxBar(40)
