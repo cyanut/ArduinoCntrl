@@ -112,12 +112,12 @@ def startSerial():
 					serPort = serialPorts[ask_exit]
 					f = open(prgmDir+"settings.txt","r")
 					temp = []
-					for i in range(3):
+					for i in range(5):
 						temp.append(f.readline())
 					f.close()
 					f = open(prgmDir+"settings.txt","w")
 					f.write(serialPorts[ask_exit]+"\n")
-					for i in range(2):
+					for i in range(4):
 						f.write(temp[i+1])
 					f.close()
 					print "\n\nTrying New Serial Port [%s]" % serPort
@@ -994,11 +994,17 @@ def setupLabJack():
 		chNum, scanFreq = channels, scan
 		f = open(prgmDir+"settings.txt","r")
 		temp = f.readline()
+		f.readline()
+		f.readline()
+		temp2 = f.readline()
+		temp3 = f.readline()
 		f.close()
 		f = open(prgmDir+"settings.txt","w")
 		f.write(temp)
 		f.write(str(chNum)+"\n")
 		f.write(str(scanFreq)+"\n")
+		f.write(temp2)
+		f.write(temp3)
 		f.close()
 	except UnboundLocalError:
 		pass
@@ -1122,7 +1128,7 @@ class readThread(threading.Thread):
 		global sdrMissed, beforeStart, runTime, afterStop, ttlRunTime
 		global sdrTotalAux1, sdrTotalAux2, sdrTotalMain, sdrTotal
 		global finalSmplFreq, finalScanFreq, finalSmplFreqExp, finalScanFreqExp
-		global missedBefore, missedDuring, missedAfter
+		global missedBefore, missedDuring, missedAfter, hiddenOption
 		sdrMissed, sdrMissedList = 0, []
 		ljSaveName = "["+expName+"]-"+getDay(3)
 		f = open(resultsDir+ljSaveName+".csv","w")
@@ -1161,10 +1167,19 @@ class readThread(threading.Thread):
 		f.close()
 		while True:
 			if runDone == 2:
-				topLine = " , BEFORE EXP, DURING EXP, AFTER EXP, TOTAL,\n"
-				timeLine = "TIME (s),%s,%s,%s,%s,\n" % (printDigits(float(int(beforeStart))/1000,8),printDigits(float(int(runTime))/1000,9),
-	        		printDigits(float(int(afterStop))/1000,8),printDigits(float(int(ttlRunTime))/1000,8))
-				samplesLine = "SAMPLES TAKEN,%s,%s,%s,%s,\n" % (printDigits(sdrTotalAux1,8),printDigits(sdrTotalMain,9),printDigits(sdrTotalAux2,8),printDigits(sdrTotal,8))
+				if hiddenOption == "p":
+					topLine = " , BEFORE EXP, DURING EXP, AFTER EXP, TOTAL, TRUE DATA CH,TRUE REF CH, ISOS DATA CH, ISOS REF CH, TRUE REF FREQ, ISOS REF FREQ\n"
+					timeLine = "TIME (s),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,\n" % (printDigits(float(int(beforeStart))/1000,8),
+						printDigits(float(int(runTime))/1000,9), printDigits(float(int(afterStop))/1000,8),
+						printDigits(float(int(ttlRunTime))/1000,8),photometryConfig1[0],photometryConfig1[1],
+						photometryConfig1[2],photometryConfig1[3],photometryConfig2[0],photometryConfig2[1])
+				else:
+					topLine = " , BEFORE EXP, DURING EXP, AFTER EXP, TOTAL,\n"
+					timeLine = "TIME (s),%s,%s,%s,%s,\n" % (printDigits(float(int(beforeStart))/1000,8),
+						printDigits(float(int(runTime))/1000,9), printDigits(float(int(afterStop))/1000,8),
+						printDigits(float(int(ttlRunTime))/1000,8))
+				samplesLine = "SAMPLES TAKEN,%s,%s,%s,%s,\n" % (printDigits(sdrTotalAux1,8),printDigits(sdrTotalMain,9),
+					printDigits(sdrTotalAux2,8),printDigits(sdrTotal,8))
 				smplsMissedLine = "SAMPLES MISSED,%s,%s,%s,%s,\n" % (missedBefore, missedDuring, missedAfter, sdrMissed)
 				smplFreqLine = "SAMPLING FREQ (HZ), ,%s, ,%s,\n" % (printDigits(finalSmplFreqExp,9),printDigits(finalSmplFreq,8))
 				scanFreqLine = "SCAN FREQ (HZ), ,%s, ,%s,\n" % (printDigits(finalScanFreqExp,9),printDigits(finalScanFreq,8))
@@ -1287,7 +1302,7 @@ except EnvironmentError:
 	fullscreenMsg = "Expand this window to FULLSCREEN to properly render graphical interface elements.\n"
 #STARTING GRAPHICS
 print gfxBar(40,0,">>>ARDUINO CONTROL")
-raw_input(fullscreenMsg+"Press [enter] to begin: ")
+hiddenOption = raw_input(fullscreenMsg+"Press [enter] to begin: ").lower()
 ####################
 #CHECKING FOR DIRECTORIES
 if not os.path.exists(prgmDir):
@@ -1304,7 +1319,42 @@ if not os.path.isfile(prgmDir+"settings.txt"):
 	f.write("/dev/cu.usbmodem1421\n")
 	f.write("[0,2]\n")
 	f.write("20000\n")
+	f.write("N/A1\n")
+	f.write("N/A2\n")
 	f.close()
+#HIDDEN OPTIONS FOR PHOTOMETRY OUTPUT FILES
+if hiddenOption == "p":
+	print "Hidden options: You have opted for additional configuration for PHOTOMETRY."
+	with open(prgmDir+"settings.txt","r") as f:
+		sLine1, sLine2, sLine3 = f.readline(), f.readline(), f.readline()
+		photometryConfig1, photometryConfig2 = f.readline().strip(), f.readline().strip()
+		if photometryConfig1.startswith("N/A"):
+			photometryConfig1 = raw_input("[LABJACK CHANNEL FORMAT]: True Data, True Reference, Isosbestic Data, Isosbestic Reference").strip().split(",")
+			photometryConfig2 = raw_input("[ REFERENCE FREQ FORMAT]: True Reference Freq Hz, Isosbestic Reference Freq Hz").strip().split(",")
+		else:
+			photometryConfig1, photometryConfig2 = ast.literal_eval(photometryConfig1), ast.literal_eval(photometryConfig2)
+			print "EXISTING PHOTOMETRY OPTIONS: "
+			print "True Data Channel: {}; True Ref Channel: {}".format(photometryConfig1[0],photometryConfig1[1])
+			print "Isosbestic Data Channel: {}; Isosbestic Ref Channel: {}".format(photometryConfig1[2],photometryConfig1[3])
+			print "True Ref Freq: {}; Isosbestic Ref Freq: {}".format(photometryConfig2[0],photometryConfig2[1])
+			print "#"*20
+			while True:
+				askPhotoConfig = raw_input("Is this okay? (Y/N): ").lower()
+				if askPhotoConfig == "y":
+					break
+				elif askPhotoConfig == "n":
+					photometryConfig1 = raw_input("[LABJACK CHANNEL FORMAT]: True Data, True Reference, Isosbestic Data, Isosbestic Reference").strip().split(",")
+					photometryConfig2 = raw_input("[ REFERENCE FREQ FORMAT]: True Reference Freq Hz, Isosbestic Reference Freq Hz").strip().split(",")
+				else:
+					print "Type (Y/N) to continue."
+	with open(prgmDir+"settings.txt","w") as f:
+		f.write(sLine1)
+		f.write(sLine2)
+		f.write(sLine3)
+		f.write(str(photometryConfig1)+"\n")
+		f.write(str(photometryConfig2)+"\n")
+	print "These settings will be saved to your .csv outputs to aid in photometrya anlysis"
+	raw_input("Press [enter] to continue.")
 if not os.path.exists(presetDir):
 	os.makedirs(presetDir)
 	#Create default examples
