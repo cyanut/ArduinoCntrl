@@ -703,21 +703,20 @@ def runExperiment():
 		gfxTimeDisplay("frequency modulated outputs",pwm_pack,timeSegment)
 		###
 		#PROGRESS BAR HERE
-		temp = datetime.now()
-		prevTimeProg, prevTimeTime = temp, temp
+		startProg = datetime.now()
 		barCounter, timeCounter = 0, 0.0
 		segmentSize = (float(packet[3])/1000)/100
 		timeSize = 0.1
+		numTime, numProg = 1, 1
 		while True:
 			now = datetime.now()
-			timeDiffTime = (now-prevTimeTime).seconds+float((now-prevTimeTime).microseconds)/1000000
-			timeDiffProg = (now-prevTimeProg).seconds+float((now-prevTimeProg).microseconds)/1000000
-			if timeDiffTime >= timeSize:
+			timeDiff = (now-startProg).seconds+float((now-startProg).microseconds)/1000000
+			if timeDiff/numTime >= timeSize:
+				numTime += 1
 				timeCounter += timeSize
-				prevTimeTime = now
-			if timeDiffProg >= segmentSize:
+			if timeDiff/numProg >= segmentSize:
+				numProg += 1
 				barCounter += 1
-				prevTimeProg = now
 			if barCounter == 0:
 				barCounter, timeCounter = min(barCounter,99), min(timeCounter,float(packet[3]/1000)-0.1)
 				sys.stdout.write("\r"+"*"+"-"*(99-barCounter)+" ["+str(timeCounter)+"s]")
@@ -753,6 +752,7 @@ def runExperiment():
 	while True:
 		if runDone == 2:
 			break
+		time.sleep(0.001)
 	print "\n"*2+"[SAVE DIRECTORY]: '"+resultsDir+"'"
 	print "[LABJACK DATA  ]: '"+ljSaveName+".csv'"
 	print "[VIDEO OUTPUT  ]: '"+cameraSaveName+".mp4'"
@@ -779,7 +779,6 @@ def runExperiment():
 			break
 		else:
 			print "Type (Y/N) to Continue"
-	return
 ####################
 
 ####################
@@ -1028,10 +1027,11 @@ class StreamDataReader(object):
         self.dataCountAux2 = 0
         self.running = False
     def readStreamData(self):
-        global timeStart, packet, nCh, runDone, timeStartRead
+        global timeStart, packet, nCh, runDone, timeStartRead, sdrMissedList
         global sdrMissed, beforeStart, runTime, afterStop, ttlRunTime
         global sdrTotalAux1, sdrTotalAux2, sdrTotalMain, sdrTotal
         global finalSmplFreq, finalScanFreq, finalSmplFreqExp, finalScanFreqExp
+        global missedBefore, missedDuring, missedAfter
         self.running = True
         self.device.streamStart()
         timeStartRead = datetime.now()
@@ -1074,6 +1074,16 @@ class StreamDataReader(object):
         finalScanFreq = int(round(float(sdrTotal)*1000/(nCh*ttlRunTime)))
         finalSmplFreqExp = int(round(float(sdrTotalMain)*1000/(runTime)))
         finalScanFreqExp = int(round(float(sdrTotalMain)*1000/(nCh*runTime)))
+        #Reconstructing when and where missed values occured
+        missedBefore, missedDuring, missedAfter = 0, 0, 0
+        if len(sdrMissedList) != 0:
+	        for i in sdrMissedList:
+	        	if i[1] <= float(int(beforeStart))/1000:
+	        		missedBefore += i[0]
+	        	elif i[1] > float(int(beforeStart))/1000 and i[1] <= float(int(beforeStart))/1000+float(int(runTime))/1000:
+	        		missedDuring += i[0]
+	        	elif i[1] > float(int(beforeStart))/1000+float(int(runTime))/1000 and i[1] <= float(int(beforeStart))/1000+float(int(runTime))/1000+float(int(afterStop))/1000:
+	        		missedAfter += i[0]
         while True:
         	warning = False
         	if sdrMissed != 0:
@@ -1086,10 +1096,11 @@ class StreamDataReader(object):
 	        	print "          TIME (s)|%s|     %s     |%s|%s|" % (printDigits(float(int(beforeStart))/1000,8),printDigits(float(int(runTime))/1000,9),
 	        		printDigits(float(int(afterStop))/1000,8),printDigits(float(int(ttlRunTime))/1000,8))
 	        	print "     SAMPLES TAKEN|%s|     %s     |%s|%s|" % (printDigits(sdrTotalAux1,8),printDigits(sdrTotalMain,9),printDigits(sdrTotalAux2,8),printDigits(sdrTotal,8))
+	        	print "    SAMPLES MISSED|%s|     %s     |%s|%s|" % (printDigits(missedBefore,8),printDigits(missedDuring,9),printDigits(missedAfter,8),printDigits(sdrMissed,8))
 	        	print "SAMPLING FREQ (Hz)|        |     %s     |        |%s|" % (printDigits(finalSmplFreqExp,9),printDigits(finalSmplFreq,8))
 	        	print "    SCAN FREQ (Hz)|        |     %s     |        |%s|" % (printDigits(finalScanFreqExp,9),printDigits(finalScanFreq,8))
 		        print "------------------------------------------------------------------"
-		        print "*(Camera and Arduino are only on DURING_EXPERIMENT)"
+		        print "*(Camera and Arduino are turned on only DURING_EXPERIMENT)"
 		        print "#"*10
 		        if warning:
 		        	print
@@ -1101,16 +1112,18 @@ class StreamDataReader(object):
 		        	raw_input("Press [enter] to continue: ")
 		        runDone = 2
 		        break
+			time.sleep(0.00001)
 class readThread(threading.Thread):
 	def __init__(self,sdr):
 		threading.Thread.__init__(self)
 		self.sdr = sdr
 	def run(self):
-		global chNum, nCh, ljSaveName, runDone, expName
+		global chNum, nCh, ljSaveName, runDone, expName, sdrMissedList
 		global sdrMissed, beforeStart, runTime, afterStop, ttlRunTime
 		global sdrTotalAux1, sdrTotalAux2, sdrTotalMain, sdrTotal
 		global finalSmplFreq, finalScanFreq, finalSmplFreqExp, finalScanFreqExp
-		sdrMissed = 0
+		global missedBefore, missedDuring, missedAfter
+		sdrMissed, sdrMissedList = 0, []
 		ljSaveName = "["+expName+"]-"+getDay(3)
 		f = open(resultsDir+ljSaveName+".csv","w")
 		for i in range(nCh):
@@ -1124,7 +1137,8 @@ class readThread(threading.Thread):
 				if result['errors'] != 0:
 					sdrMissed += result['missed']
 					missedTime = datetime.now()
-					timeDiff = str((missedTime - timeStart).seconds*1000+(missedTime - timeStart).microseconds/1000)
+					timeDiff = str((missedTime - timeStartRead).seconds*1000+(missedTime - timeStartRead).microseconds/1000)
+					sdrMissedList.append([copy.deepcopy(result['missed']),copy.deepcopy(float(timeDiff)/1000)])
 					print "\n>>>LabJack reported [%s] Errors: " % result['errors']
 					print ">>>We lost [%s] values at [%sms] since Start." % (result['missed'], timeDiff)
 					print ">>>If this continues, you may wish to reduce your LabJack SCAN_FREQUENCY after restarting the script."
@@ -1151,12 +1165,14 @@ class readThread(threading.Thread):
 				timeLine = "TIME (s),%s,%s,%s,%s,\n" % (printDigits(float(int(beforeStart))/1000,8),printDigits(float(int(runTime))/1000,9),
 	        		printDigits(float(int(afterStop))/1000,8),printDigits(float(int(ttlRunTime))/1000,8))
 				samplesLine = "SAMPLES TAKEN,%s,%s,%s,%s,\n" % (printDigits(sdrTotalAux1,8),printDigits(sdrTotalMain,9),printDigits(sdrTotalAux2,8),printDigits(sdrTotal,8))
+				smplsMissedLine = "SAMPLES MISSED,%s,%s,%s,%s,\n" % (missedBefore, missedDuring, missedAfter, sdrMissed)
 				smplFreqLine = "SAMPLING FREQ (HZ), ,%s, ,%s,\n" % (printDigits(finalSmplFreqExp,9),printDigits(finalSmplFreq,8))
 				scanFreqLine = "SCAN FREQ (HZ), ,%s, ,%s,\n" % (printDigits(finalScanFreqExp,9),printDigits(finalScanFreq,8))
-				stats = topLine+timeLine+samplesLine+smplFreqLine+scanFreqLine
+				stats = topLine+timeLine+samplesLine+smplsMissedLine+smplFreqLine+scanFreqLine
 				with file(resultsDir+ljSaveName+".csv", "r") as original: data = original.read()
 				with file(resultsDir+ljSaveName+".csv", "w") as modified: modified.write(stats + data)
 				break
+			time.sleep(0.00001)
 ####################
 #GRAPHING RESULT DATA
 def plotData():
@@ -1165,15 +1181,16 @@ def plotData():
 	import plotly.plotly as py
 	import plotly.graph_objs as go
 	global ttlRunTime
-	totalScans = -6
+	linesTop = 6
+	totalScans = -(1+linesTop)
 	with open(resultsDir+ljSaveName+".csv") as fil:
 		for line in fil:
 			if line.strip():
 				totalScans += 1
 	axisTime, name, axisSignal, traces = [], [], {}, {}
 	f = open(resultsDir+ljSaveName+".csv","r")
-	f.readline()
-	f.readline()
+	for i in range(linesTop):
+		f.readline()
 	name = f.readline()[:-1].split(",")
 	for i in range(nCh):
 		axisSignal[i] = []
@@ -1216,8 +1233,12 @@ def cameraRecord(name,c,numFrames):
     c.openAVI(name, frate=30, bitrate=1000000)
     for i in range(numFrames):
         c.appendAVI()
-    c.closeAVI()
     c.set_strobe_mode(3, False, 1, 0, 10)
+    while True:
+    	time.sleep(0.00001)
+    	if runDone == 2:
+    		break
+    c.closeAVI()
 def cameraClose(c):
     c.stop_capture()
     c.disconnect()
