@@ -1,11 +1,3 @@
-import serial, time, ast, os, sys, platform, glob, threading, thread
-import calendar, traceback, u6, LabJackPython, math, copy, Queue, struct
-from struct import *
-from u6 import U6
-from operator import itemgetter
-from datetime import datetime
-import numpy as np
-import flycapture2a as fc2
 ####################
 #TIME OUT DECORATORS
 def cdquit(fn_name):

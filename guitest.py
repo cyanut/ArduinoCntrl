@@ -1,7 +1,13 @@
 import Tkinter as tk
 import tkMessageBox as tkmb
-import os, copy, ast, re
+import serial, time, ast, os, sys, platform, glob, threading, thread, copy
+import calendar, traceback, re #LabJackPython, math, Queue, struct #u6,
+from struct import *
+#from u6 import U6
+from operator import itemgetter
 from datetime import datetime
+#import numpy as np
+#import flycapture2a as fc2
 
 #####
 #GUIs
@@ -173,7 +179,171 @@ class saveLocationGUI(GUI):
             dirs.resultsDir = preresultsDir+"Session started at ["+getDay(3)+"]/" 
             os.makedirs(dirs.resultsDir)
             self.root.destroy()
-
+class labJackGUI(GUI):
+    def __init__(self):
+        self.MAX_REQUESTS, self.SMALL_REQUEST = 0, 0
+        self.stlFctr, self.ResIndx = 1, 0
+        self.ljSaveName = ""
+        with open(dirs.prgmDir+"settings.txt","r") as f:
+            f.readline()
+            self.chNum = ast.literal_eval(f.readline())
+            self.scanFreq = int(f.readline())
+            self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
+        self.title = "LabJack Options"
+        GUI.__init__(self)
+        self.updatePresetSaveList()
+    def updatePresetSaveList(self):
+        self.presetSaveList = []
+        dirListing = os.listdir(dirs.prgmDir)
+        dirListing.remove("settings.txt")
+        for f in dirListing:
+            if f.endswith(".txt"):
+                self.presetSaveList.append(f[:-4].upper())
+    def setup(self):
+        leftFrame = tk.LabelFrame(self.root, text="Manual Configuration")
+        leftFrame.grid(row=0,column=0)
+        rightFrame = tk.LabelFrame(self.root, text="Preset Configuration")
+        rightFrame.grid(row=0,column=1)
+        ########################################
+        #load presets
+        usrMsg = tk.StringVar()
+        label= tk.Label(rightFrame, textvariable = usrMsg)
+        label.pack(fill="both",expand="yes")
+        usrMsg.set("\nChoose a Preset\nOr Save a New Preset:")
+        existingFrame = tk.LabelFrame(rightFrame, text="Select a Saved Preset")
+        existingFrame.pack(fill="both", expand="yes")
+        self.presetChosen = tk.StringVar()
+        self.presetChosen.set(max(self.presetSaveList, key=len))
+        savePresetList = tk.OptionMenu(existingFrame,self.presetChosen,*self.presetSaveList,command=self.listChoose)
+        savePresetList.pack(side=tk.TOP)
+        #save new presets
+        newPresetFrame = tk.LabelFrame(rightFrame, text="(Optional) Save New Preset:")
+        newPresetFrame.pack(fill="both", expand="yes")
+        self.newSaveEntry = tk.Entry(newPresetFrame)
+        self.newSaveEntry.pack()
+        doneButton = tk.Button(newPresetFrame,text="SAVE",command = self.saveButton)
+        doneButton.pack()
+        ########################################
+        #input/view new settings
+        usrMsg = tk.StringVar()
+        label= tk.Label(leftFrame, textvariable = usrMsg)
+        label.pack(fill="both",expand="yes")
+        usrMsg.set("\nMost Recently Used Settings:")
+        #initialize frames for lj options
+        channelFrame = tk.LabelFrame(leftFrame, text = "Channels Selected")
+        channelFrame.pack(fill="both",expand="yes")
+        checkButtons = [[]]*14
+        self.buttonVars = [[]]*14
+        self.createManyVars("Int", self.buttonVars)
+        for i in range(14):
+            checkButtons[i] = tk.Checkbutton(channelFrame, 
+                text=printDigits(i,2,placeHolder="0"),
+                variable = self.buttonVars[i], onvalue = 1, offvalue = 0,
+                command = lambda i=i: self.selectButton(i))
+        for i in range(5):
+            checkButtons[i].grid(row=0,column=i)
+        for i in range(5):
+            checkButtons[i+5].grid(row=1,column=i)
+        for i in range(4):
+            checkButtons[i+5+5].grid(row=2,column=i)
+        for i in self.chNum:
+            checkButtons[i].select()
+        #sampling Freq input options
+        scanFrame = tk.LabelFrame(leftFrame, text = "Scan Frequency")
+        scanFrame.pack(fill="both",expand="yes")
+        L1 = tk.Label(scanFrame,text="Freq/Channel (Hz):")
+        L1.pack(side=tk.LEFT)
+        self.E1 = tk.Entry(scanFrame,width=8)
+        self.E1.pack(side=tk.LEFT)
+        self.E1.insert(tk.END,self.scanFreq)
+        #button to exit
+        doneButton = tk.Button(self.root,text="FINISH",command = self.exitButton)
+        doneButton.grid(row=1,column=0,columnspan=2)
+        self.run()
+    def selectButton(self,i):
+        tempChNum = self.chNum
+        self.chNum = []
+        for i in range(14):
+            if self.buttonVars[i].get() == 1:
+                self.chNum.append(i)
+        self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
+        if self.nCh > 8:
+            tkmb.showinfo("Error!", "You cannot use more than 8 LabJack channels at once.")
+            self.chNum = tempChNum
+            for i in range(14):
+                self.buttonVars[i].set(0)
+            for i in self.chNum:
+                self.buttonVars[i].set(1)
+            self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
+        elif self.nCh == 0:
+            tkmb.showinfo("Error!", "You must configure at least one channel.")
+            self.chNum = tempChNum
+            for i in range(14):
+                self.buttonVars[i].set(0)
+            for i in self.chNum:
+                self.buttonVars[i].set(1)
+            self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
+    def saveButton(self):
+        validity = self.checkInputValidity()
+        if validity == 1:
+            saveName = self.newSaveEntry.get().strip().lower()
+            if len(saveName) == 0:
+                tkmb.showinfo("Error!", 
+                        "You must give your Preset a name.")
+            elif len(saveName) != 0:
+                if saveName == "settings":
+                    tkmb.showinfo("Error!", 
+                        "You cannot overwrite the primary [Settings] preset\n\nChoose another name.")
+                elif not os.path.isfile(dirs.prgmDir+saveName+".txt"):
+                    with open(dirs.prgmDir+saveName+".txt","w") as f:
+                        f.write(str(self.chNum)+"\n"+str(self.scanFreq)+"\n")
+                        tkmb.showinfo("Saved!", "Preset saved as [{}]".format(saveName.upper()))
+                elif os.path.isfile(dirs.prgmDir+saveName+".txt"):
+                    if tkmb.askyesno("Overwrite", "[{}] already exists.\nOverwrite this preset?".format(saveName.upper())):
+                        with open(dirs.prgmDir+saveName+".txt","w") as f:
+                            f.write(str(self.chNum)+"\n"+str(self.scanFreq)+"\n")
+                            tkmb.showinfo("Saved!", "Preset saved as [{}]".format(saveName.upper()))
+    def exitButton(self):
+        validity = self.checkInputValidity()
+        if validity == 1:
+            self.root.destroy()
+    def checkInputValidity(self):
+        validity = 0
+        try:
+            self.scanFreq = int(self.E1.get())
+            maxFreq = int(50000/self.nCh)
+            if self.scanFreq == 0:
+                tkmb.showinfo("Error!", "Scan frequency must be higher than 0 Hz.")
+            elif self.scanFreq > maxFreq:
+                tkmb.showinfo("Error!", 
+                    "SCAN_FREQ x NUM_CHANNELS must be lower than 50,000Hz.\n\nMax [{} Hz] right now with [{}] Channels in use.".format(maxFreq,self.nCh))
+            else:
+                validity = 1
+                with open(dirs.prgmDir+"settings.txt","r") as f:
+                    hold = []
+                    for i in range(5):
+                        hold.append(f.readline())
+                with open(dirs.prgmDir+"settings.txt","w") as f:
+                    f.write(hold[0])
+                    f.write(str(self.chNum)+"\n")
+                    f.write(str(self.scanFreq)+"\n")
+                    f.write(hold[3])
+                    f.write(hold[4])
+        except ValueError:
+            tkmb.showinfo("Error!", "Scan Frequency must be an integer in Hz.")
+        return validity
+    def listChoose(self,fileName):
+        with open(dirs.prgmDir+fileName+".txt") as f:
+            self.chNum = map(int,ast.literal_eval(f.readline().strip()))
+            self.scanFreq = int(f.readline().strip())
+            print self.chNum, self.scanFreq
+            for i in range(14):
+                self.buttonVars[i].set(0)
+            for i in self.chNum:
+                self.buttonVars[i].set(1)
+            self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
+            self.E1.delete(0,"end")
+            self.E1.insert(tk.END,self.scanFreq) 
 
 #####
 #Misc. Options
@@ -253,255 +423,102 @@ class arduino():
 
 #####
 #Labjack related
-class labJack(GUI):
-    def __init__(self):
-        self.MAX_REQUESTS, self.SMALL_REQUEST = 0, 0
-        self.stlFctr, self.ResIndx = 1, 0
-        self.ljSaveName = ""
-        with open(dirs.prgmDir+"settings.txt","r") as f:
-            f.readline()
-            self.chNum = ast.literal_eval(f.readline())
-            self.scanFreq = int(f.readline())
-            self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
-        self.title = "LabJack Options"
-        GUI.__init__(self)
-        self.presetSaveList = []
-        dirListing = os.listdir(dirs.prgmDir)
-        dirListing.remove("settings.txt")
-        for f in dirListing:
-            if f.endswith(".txt"):
-                self.presetSaveList.append(f[:-4].upper())
-    def setup(self):
-        leftFrame = tk.LabelFrame(self.root, text="Manual Configuration")
-        leftFrame.grid(row=0,column=0)
-        rightFrame = tk.LabelFrame(self.root, text="Preset Configuration")
-        rightFrame.grid(row=0,column=1)
-        ########################################
-        #load presets
-        usrMsg = tk.StringVar()
-        label= tk.Label(rightFrame, textvariable = usrMsg)
-        label.pack(fill="both",expand="yes")
-        usrMsg.set("\nChoose a Preset\nOr Save a New Preset:")
-        existingFrame = tk.LabelFrame(rightFrame, text="Select a Saved Preset")
-        existingFrame.pack(fill="both", expand="yes")
-        self.presetChosen = tk.StringVar()
-        self.presetChosen.set(max(self.presetSaveList, key=len))
-        savePresetList = tk.OptionMenu(existingFrame,self.presetChosen,*self.presetSaveList,command=self.listChoose)
-        savePresetList.pack(side=tk.TOP)
-        #save new presets
-        newPresetFrame = tk.LabelFrame(rightFrame, text="(Optional) Save New Preset:")
-        newPresetFrame.pack(fill="both", expand="yes")
-        self.newSaveEntry = tk.Entry(newPresetFrame)
-        self.newSaveEntry.pack()
-        ########################################
-        #input/view new settings
-        usrMsg = tk.StringVar()
-        label= tk.Label(leftFrame, textvariable = usrMsg)
-        label.pack(fill="both",expand="yes")
-        usrMsg.set("\nMost Recently Used Settings:")
-        #initialize frames for lj options
-        channelFrame = tk.LabelFrame(leftFrame, text = "Channels Selected")
-        channelFrame.pack(fill="both",expand="yes")
-        checkButtons = [[]]*14
-        self.buttonVars = [[]]*14
-        self.createManyVars("Int", self.buttonVars)
-        for i in range(14):
-            checkButtons[i] = tk.Checkbutton(channelFrame, 
-                text=printDigits(i,2,placeHolder="0"),
-                variable = self.buttonVars[i], onvalue = 1, offvalue = 0,
-                command = lambda i=i: self.selectButton(i))
-        for i in range(5):
-            checkButtons[i].grid(row=0,column=i)
-        for i in range(5):
-            checkButtons[i+5].grid(row=1,column=i)
-        for i in range(4):
-            checkButtons[i+5+5].grid(row=2,column=i)
-        for i in self.chNum:
-            checkButtons[i].select()
-        #sampling Freq input options
-        scanFrame = tk.LabelFrame(leftFrame, text = "Scan Frequency")
-        scanFrame.pack(fill="both",expand="yes")
-        L1 = tk.Label(scanFrame,text="Freq/Channel (Hz):")
-        L1.pack(side=tk.LEFT)
-        self.E1 = tk.Entry(scanFrame,width=8)
-        self.E1.pack(side=tk.LEFT)
-        self.E1.insert(tk.END,self.scanFreq)
-        #button to exit
-        doneButton = tk.Button(self.root,text="FINISH",command = self.exitButton)
-        doneButton.grid(row=1,column=0,columnspan=2)
-        self.run()
-    def selectButton(self,i):
-        tempChNum = self.chNum
-        self.chNum = []
-        for i in range(14):
-            if self.buttonVars[i].get() == 1:
-                self.chNum.append(i)
-        self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
-        if self.nCh > 8:
-            tkmb.showinfo("Error!", "You cannot use more than 8 LabJack channels at once.")
-            self.chNum = tempChNum
-            for i in range(14):
-                self.buttonVars[i].set(0)
-            for i in self.chNum:
-                self.buttonVars[i].set(1)
-            self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
-        elif self.nCh == 0:
-            tkmb.showinfo("Error!", "You must configure at least one channel.")
-            self.chNum = tempChNum
-            for i in range(14):
-                self.buttonVars[i].set(0)
-            for i in self.chNum:
-                self.buttonVars[i].set(1)
-            self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
-    def exitButton(self):
-        ready = 0
-        try:
-            self.scanFreq = int(self.E1.get())
-            maxFreq = int(50000/self.nCh)
-            if self.scanFreq == 0:
-                tkmb.showinfo("Error!", "Scan frequency must be higher than 0 Hz.")
-                ready = 0
-            elif self.scanFreq > maxFreq:
-                tkmb.showinfo("Error!", 
-                    "SCAN_FREQ x NUM_CHANNELS must be lower than 50,000Hz.\n\nMax [{} Hz] right now with [{}] Channels in use.".format(maxFreq,self.nCh))
-                ready = 0
-            else:
-                with open(dirs.prgmDir+"settings.txt","r") as f:
-                    hold = []
-                    for i in range(5):
-                        hold.append(f.readline())
-                with open(dirs.prgmDir+"settings.txt","w") as f:
-                    f.write(hold[0])
-                    f.write(str(self.chNum)+"\n")
-                    f.write(str(self.scanFreq)+"\n")
-                    f.write(hold[3])
-                    f.write(hold[4])
-                    ready = 1
-        except ValueError:
-            tkmb.showinfo("Error!", "Scan Frequency must be an integer in Hz.")
-            ready = 0
-        saveName = self.newSaveEntry.get().strip().lower()
-        if len(saveName) != 0:
-            if saveName == "settings":
-                tkmb.showinfo("Error!", 
-                    "You cannot overwrite the primary [Settings.txt] file.")
-                ready = 0
-            elif not os.path.isfile(dirs.prgmDir+saveName+".txt"):
-                with open(dirs.prgmDir+saveName+".txt","w") as f:
-                    f.write(str(self.chNum)+"\n"+str(self.scanFreq)+"\n")
-                    tkmb.showinfo("Saved!", "Preset saved as [{}]".format(saveName.upper()))
-                ready = 1
-            elif os.path.isfile(dirs.prgmDir+saveName+".txt"):
-                if tkmb.askyesno("Overwrite", "[{}] already exists.\nOverwrite this preset?".format(saveName.upper())):
-                    with open(dirs.prgmDir+saveName+".txt","w") as f:
-                        f.write(str(self.chNum)+"\n"+str(self.scanFreq)+"\n")
-                        tkmb.showinfo("Saved!", "Preset saved as [{}]".format(saveName.upper()))
-                    ready = 1
-                else:
-                    ready = 0
-        if ready == 1:
-            self.root.destroy()
-    def listChoose(self,fileName):
-        """
-        fileName is automatically passed when the command 
-        in the tk.OptionMenu "self.savePresetList" is clicked.
-        """ 
-        with open(dirs.prgmDir+fileName+".txt") as f:
-            self.chNum = map(int,ast.literal_eval(f.readline().strip()))
-            self.scanFreq = int(f.readline().strip())
-            print self.chNum, self.scanFreq
-            for i in range(14):
-                self.buttonVars[i].set(0)
-            for i in self.chNum:
-                self.buttonVars[i].set(1)
-            self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
-            self.E1.delete(0,"end")
-            self.E1.insert(tk.END,self.scanFreq)
-
-
-
-
-
 """
-                        
-                            print "\n'%s' already exists as a LabJack preset!" %askLJFile
-                            loop3 = 0
-                            while loop3 == 0:
-                                ask_ovrWrt = raw_input("Overwrite this preset anyway? (Y/N): ").lower()
-                                if ask_ovrWrt == "y":
-                                    print "\nSaving..."
-                                    f = open(prgmDir+askLJFile+".txt","w")
-                                    f.write(str(channels)+"\n"+str(scan)+"\n")
-                                    time.sleep(0.2)
-                                    f.close()
-                                    print "Overwritten to "+prgmDir
-                                    loop1 = 1
-                                    loop2 = 1
-                                    break
-                                elif ask_ovrWrt == "n":
-                                    break
-                                else:
-                                    print "Type (Y/N) to Continue."
-                elif saveLJ == "n":
-                    break
-                else:
-                    print "Type (Y/N) to Continue."
-            break
-        elif askLJ == "presets":
-
-            print gfxBar(40)
-            print ">>>AVAILABLE LABJACK PRESETS\n"
-            for i in allFiles:
-                f = open(prgmDir+i,"r")
-                print "["+i[:-4].upper()+"]: Channels: "+f.readline()[:-1]+"; Scan Frequency: "+f.readline()[:-1]+"\n"
-                f.close()
-            print "#"*10+"\n"
-            while True:
-                chooseLJ = raw_input(">>>Pick a preset\n>>>Alternatively, type 'exit()' for other options: ").lower()
-                if chooseLJ == "exit()":
-                    print gfxBar(40,0,"LABJACK SETUP\n>>>Last Used Settings:\n\n"+ljSettings)
-                    print "\n>>>Use these settings for LabJack?\nAlternatively, customize settings or load presets."
-                    break
-                elif os.path.isfile(prgmDir+chooseLJ+".txt"):
-                    f = open(prgmDir+chooseLJ+".txt","r")
-                    channels = ast.literal_eval(f.readline())
-                    scan = int(f.readline()[:-1])
-                    LJLoop1 = 1
-                    break
-                else:
-                    print "\n>>>You did not enter a correct Preset name."
+class LJU6(u6.U6):
+    def streamConfig(self, NumChannels = 1, ResolutionIndex = 0, 
+        SamplesPerPacket = 25, SettlingFactor = 0, 
+        InternalStreamClockFrequency = 0, DivideClockBy256 = False, 
+        ScanInterval = 1, ChannelNumbers = [0], ChannelOptions = [0], 
+        ScanFrequency = None, SampleFrequency = None):
+        if NumChannels != len(ChannelNumbers) or NumChannels != len(ChannelOptions):
+            raise LabJackException("NumChannels must match length of ChannelNumbers and ChannelOptions")
+        if len(ChannelNumbers) != len(ChannelOptions):
+            raise LabJackException("len(ChannelNumbers) doesn't match len(ChannelOptions)")
+        if (ScanFrequency is not None) or (SampleFrequency is not None):
+            if ScanFrequency is None:
+                ScanFrequency = SampleFrequency
+            if ScanFrequency < 1000:
+                if ScanFrequency < 25:
+                    SamplesPerPacket = self.findSamplesPerPacket(ScanFrequency,NumChannels) #below 25 ScanFreq, S/P is some multiple of nCh less than SF.
+                DivideClockBy256 = True
+                ScanInterval = 15625/ScanFrequency
+            else:
+                DivideClockBy256 = False
+                ScanInterval = 4000000/ScanFrequency
+        ScanInterval = min( ScanInterval, 65535 )
+        ScanInterval = int( ScanInterval )
+        ScanInterval = max( ScanInterval, 1 )
+        SamplesPerPacket = max( SamplesPerPacket, 1)
+        SamplesPerPacket = int( SamplesPerPacket )
+        SamplesPerPacket = min ( SamplesPerPacket, 25)
+        command = [ 0 ] * (14 + NumChannels*2)
+        #command[0] = Checksum8
+        command[1] = 0xF8
+        command[2] = NumChannels+4
+        command[3] = 0x11
+        #command[4] = Checksum16 (LSB)
+        #command[5] = Checksum16 (MSB)
+        command[6] = NumChannels
+        command[7] = ResolutionIndex
+        command[8] = SamplesPerPacket
+        #command[9] = Reserved
+        command[10] = SettlingFactor
+        command[11] = (InternalStreamClockFrequency & 1) << 3
+        if DivideClockBy256:
+            command[11] |= 1 << 1
+        t = struct.pack("<H", ScanInterval)
+        command[12] = ord(t[0])
+        command[13] = ord(t[1])
+        for i in range(NumChannels):
+            command[14+(i*2)] = ChannelNumbers[i]
+            command[15+(i*2)] = ChannelOptions[i]
+        self._writeRead(command, 8, [0xF8, 0x01, 0x11])
+        self.streamSamplesPerPacket = SamplesPerPacket
+        self.streamChannelNumbers = ChannelNumbers
+        self.streamChannelOptions = ChannelOptions
+        self.streamConfiged = True
+        if InternalStreamClockFrequency == 1:
+            freq = float(48000000)
         else:
-            print "\n>>>Type [Y/N/PRESETS] to continue."
-    try:
-        chNum, scanFreq = channels, scan
-        f = open(prgmDir+"settings.txt","r")
-        temp = f.readline()
-        f.readline()
-        f.readline()
-        temp2 = f.readline()
-        temp3 = f.readline()
-        f.close()
-        f = open(prgmDir+"settings.txt","w")
-        f.write(temp)
-        f.write(str(chNum)+"\n")
-        f.write(str(scanFreq)+"\n")
-        f.write(temp2)
-        f.write(temp3)
-        f.close()
-    except UnboundLocalError:
-        pass
-    while True:
+            freq = float(4000000)
+        if DivideClockBy256:
+            freq /= 256
+        freq = freq/ScanInterval
+        
+        if SamplesPerPacket < 25: #Only happens for ScanFreq < 25, in which case this number is generated as described above
+            self.packetsPerRequest = 1
+        elif SamplesPerPacket == 25: #For all ScanFreq > 25. 
+            self.packetsPerRequest = self.findPacketsPerRequest(ScanFrequency, NumChannels)
+            #Such that PacketsPerRequest*SamplesPerPacket % NumChannels == 0, where min P/R is 1 and max 48 for nCh 1-6,8 
+            # and max 42 for nCh 7. 
+        self.packsPerReq, self.smplsPerPack = self.packetsPerRequest, SamplesPerPacket
+    def findPacketsPerRequest(self,scanFreq,nCh):
+        if nCh == 7:
+            high = 42
+        else:
+            high = 48
+        hold = []
+        for i in range(scanFreq+1):
+            if i%25 == 0 and i%nCh == 0:
+                hold.append(i)
+        hold = np.asarray(hold)
+        hold = min(high,max(hold/25))
+        hold = max(1,hold)
+        return hold
+    def findSamplesPerPacket(self,scanFreq,nCh):
+        hold = []
+        for i in range(scanFreq+1):
+            if i%nCh==0:
+                hold.append(i)
+        return max(hold)
+    def tryStartLJ(self):
         try:
-            temp = LJU6()
+            temp = u6.U6()
             temp.close()
-            break
+            return "success"
         except:
-            print gfxBar(40)
-            print ">>>Your LabJack is either disconnected or is still active from another session."
-            raw_input("Disconnect and reconnect the device, then press [enter] to continue: ")
-            print ">>>Reconnecting..."
-            time.sleep(3)
-
+            return "failed"
+"""
 
 
 
@@ -513,7 +530,7 @@ class labJack(GUI):
 
 cameraSaveName = ""
 
-"""
+
 
 ##############################################################################################################
 #=================================================PROGRAM====================================================#
@@ -526,24 +543,8 @@ dirs.setupMainDirs()
 
 
 
-l = labJack()
-
-print l.MAX_REQUESTS, l.SMALL_REQUEST
-print l.stlFctr, l.ResIndx
-print l.ljSaveName
-print l.chNum
-print l.scanFreq
-print l.nCh, l.chOpt
 
 
-l.setup()
-
-print l.MAX_REQUESTS, l.SMALL_REQUEST
-print l.stlFctr, l.ResIndx
-print l.ljSaveName
-print l.chNum
-print l.scanFreq
-print l.nCh, l.chOpt
 
 
 
@@ -561,7 +562,8 @@ saveLocationGUI.initialize()
 saveLocationGUI.run()
 
 arduino = arduino()
-labJack = labJack()
+labJackGUI = labJackGUI()
+labJackGUI.setup()
 
 
 
