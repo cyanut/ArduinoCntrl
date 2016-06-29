@@ -12,8 +12,8 @@ from datetime import datetime
 #####
 #GUIs
 class GUI():
-    def __init__(self):
-        self.root = tk.Tk()
+    def __init__(self, master):
+        self.root = master
         self.root.title(self.title)
     def center(self):
         self.root.update_idletasks()
@@ -34,27 +34,11 @@ class GUI():
             for i in range(len(inputArray)):
                 inputArray[i] = tk.StringVar()
         return inputArray
-class startGUI(GUI):
-    def __init__(self):
-        self.title = "Fear Control"
-        GUI.__init__(self)
-    def initialize(self):
-        innerFrame = tk.LabelFrame(self.root, text="Select an option to Begin")
-        beginButton = tk.Button(innerFrame, text = "NORMAL", command= lambda:self.buttonOptions("normal"))
-        photoButton = tk.Button(innerFrame, text = "PHOTOMETRY", command= lambda:self.buttonOptions("photometry"))
-        beginButton.pack(side=tk.BOTTOM)
-        photoButton.pack(side=tk.BOTTOM)
-        innerFrame.pack(fill="both", expand="yes")
-    def buttonOptions(self,choice):
-        self.root.destroy()
-        if choice == "normal":
-            self.guiOption = ""
-        elif choice == "photometry":
-            self.guiOption = "p"
 class photometryGUI(GUI):
-    def __init__(self,file):
+    def __init__(self,master):
         self.title = "Photometry Options"
-        GUI.__init__(self)
+        GUI.__init__(self,master)
+        file = dirs.prgmDir+"settings.txt"
         with open(file,"r") as f:
             self.sLine1, self.sLine2, self.sLine3 = f.readline(), f.readline(), f.readline()
             self.photometryConfig1, self.photometryConfig2 = ast.literal_eval(f.readline().strip()), ast.literal_eval(f.readline().strip())
@@ -134,12 +118,13 @@ class photometryGUI(GUI):
                     f.write(self.sLine3)
                     f.write(str(self.photometryConfig1)+"\n")
                     f.write(str(self.photometryConfig2)+"\n")
+                self.root.quit()
         except ValueError:
             tkmb.showinfo("Error!", "You must enter integer options into both frequency fields.")
 class saveLocationGUI(GUI):
-    def __init__(self):
+    def __init__(self,master):
         self.title = "Choose a Save Location"
-        GUI.__init__(self)
+        GUI.__init__(self,master)
         self.saveDirList = [d.upper() for d in os.listdir(dirs.saveDir) if os.path.isdir(dirs.saveDir+d)]
         if len(self.saveDirList) == 0:
             os.makedirs(dirs.saveDir+"Tiange")
@@ -180,7 +165,7 @@ class saveLocationGUI(GUI):
             os.makedirs(dirs.resultsDir)
             self.root.destroy()
 class labJackGUI(GUI):
-    def __init__(self):
+    def __init__(self,master):
         self.MAX_REQUESTS, self.SMALL_REQUEST = 0, 0
         self.stlFctr, self.ResIndx = 1, 0
         self.ljSaveName = ""
@@ -190,7 +175,7 @@ class labJackGUI(GUI):
             self.scanFreq = int(f.readline())
             self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
         self.title = "LabJack Options"
-        GUI.__init__(self)
+        GUI.__init__(self,master)
         self.updatePresetSaveList()
     def updatePresetSaveList(self):
         self.presetSaveList = []
@@ -543,11 +528,78 @@ dirs.setupMainDirs()
 
 
 
+class masterGUI:
+    def __init__(self,master):
+        self.master = master
+        self.master.title("Fear Control")
+        #########################################
+        #Give each setup GUI its own box
+        ####
+        #photometry config
+        #frame
+        photometryFrame = tk.LabelFrame(self.master,
+            text="Optional Photometry Config.",
+            width = 500, height = 300)
+        photometryFrame.grid(row=0,column=0)
+        #var
+        self.photometryBool = tk.IntVar()
+        self.photometryBool.set(0)
+        self.photometryString = tk.StringVar()
+        self.photometryString.set("\n[N/A]")
+        #buttons
+        self.photometryCheck = tk.Checkbutton(photometryFrame,
+            text="Toggle Photometry On/Off",
+            variable=self.photometryBool, onvalue=1, offvalue=0,
+            command=self.photometryOnOff)
+        self.photometryCheck.pack()
+        self.startGUIButton = tk.Button(photometryFrame,text="CONFIG",
+            command = self.photometryConfig)
+        self.startGUIButton.pack()
+        self.startGUIButton.config(state="disabled")
+        self.photometryLabel = tk.Label(photometryFrame,textvariable=self.photometryString)
+        self.photometryLabel.pack()
+        ######################
+        #update window
+        self.updateWindow()
+    def updateWindow(self):
+        self.master.update_idletasks()
+        w = self.master.winfo_screenwidth()
+        h = self.master.winfo_screenheight()
+        size = (500,500)
+        x = w/2 - size[0]/2
+        y = h/2 - size[1]/2
+        self.master.geometry("%dx%d+%d+%d" % (size + (x, y)))
+    def photometryOnOff(self):
+        if self.photometryBool.get() == 1:
+            self.startGUIButton.config(state="normal")
+            with open(dirs.prgmDir+"settings.txt","r") as f:
+                f.readline(),f.readline(),f.readline()
+                state = "Channels: {}\nScan Freq: {}".format(f.readline().strip(),
+                    list(ast.literal_eval(f.readline().strip())))
+            self.photometryString.set(state)
+        elif self.photometryBool.get() == 0:
+            self.startGUIButton.config(state="disabled")
+            self.photometryString.set("\n[N/A]")
+        self.updateWindow()
+    def photometryConfig(self):
+        config = tk.Toplevel(self.master)
+        configRun = photometryGUI(config)
+        configRun.initialize()
+        configRun.run()
+        state = "Channels: {}\nScan Freq: {}".format(configRun.photometryConfig1,
+            list(configRun.photometryConfig2))
+        self.photometryString.set(state)
+        self.updateWindow()
 
 
 
+root = tk.Tk()
+k=masterGUI(root)
+root.mainloop()
 
 
+
+"""
 startGUI = startGUI()
 startGUI.initialize()
 startGUI.run()
@@ -565,6 +617,6 @@ arduino = arduino()
 labJackGUI = labJackGUI()
 labJackGUI.setup()
 
-
+"""
 
 
