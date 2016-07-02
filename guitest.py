@@ -1,6 +1,6 @@
 import Tkinter as tk
 import tkMessageBox as tkmb
-import serial, time, ast, os, sys, platform, glob, threading, thread, copy
+import serial, time, ast, os, sys, platform, glob, threading, thread, copy, Pmw
 import calendar, traceback, re, LabJackPython, math, Queue, struct, u6, tkFont
 from struct import *
 from u6 import U6
@@ -86,7 +86,7 @@ class photometryGUI(GUI):
         #initialize frames for buttons
         usrMsg = tk.StringVar()
         label = tk.Label(self.root, textvariable = usrMsg, relief = tk.RAISED)
-        usrMsg.set("\nPrevious Settings Loaded\nThese settings will be saved in your .csv outputs for use with [photometryAnalysis.py]\n")
+        usrMsg.set("\nPrevious Settings Loaded\nThese settings will be saved in your .csv outputs.\n")
         label.pack(fill="both",expand="yes")
         DataFrame = tk.LabelFrame(self.root, text="Photometry Data Channel")
         trueRefFrame = tk.LabelFrame(self.root, text="Main Reference Channel")
@@ -105,7 +105,7 @@ class photometryGUI(GUI):
                 R[frameIndex][i].pack(side=tk.LEFT)
         #initialize fields for frequencies
         dataFields = [trueRefFreq, isosRefFreq]
-        frequencyFrame = tk.LabelFrame(self.root, text="Main & Isos Frequencies")
+        frequencyFrame = tk.LabelFrame(self.root, text="Primary & Isosbestic Stimulation Frequencies")
         frequencyFrame.pack(fill="both",expand="yes")
         L1 = tk.Label(frequencyFrame,text="Main Frequency: ")
         L1.pack(side=tk.LEFT)
@@ -313,11 +313,10 @@ class arduinoGUI(GUI):
         GUI.__init__(self,master)
         ##pull last used settings
         self.serPort = dirs.readWriteSettings("serial","read")[0]
-        (self.descrip,self.packet,
-            self.tone_pack,self.out_pack,
+        (self.packet,self.tone_pack,self.out_pack,
             self.pwm_pack) = dirs.readWriteSettings("arduino","read")
-        [self.packet, self.tone_pack, 
-        self.out_pack, self.pwm_pack] = [ast.literal_eval(self.packet), 
+        [self.packet, self.tone_pack,self.out_pack, self.pwm_pack] = [
+        ast.literal_eval(self.packet), 
         ast.literal_eval(self.tone_pack),
         ast.literal_eval(self.out_pack), 
         ast.literal_eval(self.pwm_pack)]
@@ -860,17 +859,22 @@ def retrieveSettings(ask_file, allFiles):
 
 
 #####
-#Misc. Options
+#Misc. Usefuls
 def printDigits(num,places,front=True,placeHolder=" "):
     if front:
         return placeHolder*(places-len(str(num)))+str(num)
     elif not front:
         return str(num)+placeHolder*(places-len(str(num)))
-def printMinFromSec(secs):
-    sec = secs%60
-    mins = secs//60
-    return "{}:{}".format(printDigits(mins,2,True,"0"),
-        printDigits(sec,2,True,"0"))
+def printMinFromSec(secs,ms=False):
+    sec = int(secs)%60
+    mins = int(secs)//60
+    if ms:
+        millis = int((secs - int(secs))*1000)
+        return "{}:{}.{}".format(printDigits(mins,2,True,"0"),
+            printDigits(sec,2,True,"0"),printDigits(millis,3,True,"0"))
+    elif not ms:
+        return "{}:{}".format(printDigits(mins,2,True,"0"),
+            printDigits(sec,2,True,"0"))
 def getDay(options=0):
     i = datetime.now()
     hour = printDigits(i.hour,2,True,"0")
@@ -902,6 +906,67 @@ def checkBin(a,register):
         if a&i > 0:
             store.append(dicts[i])
     return store
+def deepCopyLists(outer,inner):
+    hold = []
+    for i in range(outer):
+        hold.append(copy.deepcopy([copy.deepcopy([])]*inner))
+    return hold
+def presetRead(fileName):
+    with open(dirs.presetDir+fileName+".txt") as f:
+        hold = []
+        for i in range(4):
+            hold.append(f.readline())
+    return hold
+class progressBar(threading.Thread):
+    def __init__(self, canvas, bar, time, buttonOn, buttonOff, msTotalTime):
+        threading.Thread.__init__(self)
+        self.canvas = canvas
+        self.segmentSize = (float(msTotalTime/1000))/1000
+        self.msTotalTime = msTotalTime
+        self.bar = bar
+        self.time = time
+        self.running = False
+        self.numProg,self.numTime = 1,1
+        self.buttonOn = buttonOn
+        self.buttonOff = buttonOff
+        self.timeDiff = 0
+    def advance(self):
+        while self.running:
+            now = datetime.now()
+            self.timeDiff = (now-self.startProg).seconds+float((now-self.startProg).microseconds)/1000000
+            if self.timeDiff/self.numTime >= 0.005:
+                self.canvas.itemconfig(self.time,text="{}".format(printMinFromSec(self.timeDiff,True)))
+                self.numTime+=1
+            if self.timeDiff/self.numProg >= self.segmentSize:
+                self.canvas.move(self.bar,1,0)
+                if (self.numProg > 35) and (self.numProg < 965):
+                    self.canvas.move(self.time,1,0)
+                self.numProg += 1
+            self.canvas.update()
+            time.sleep(0.005)
+            if self.numProg > 1000 or self.timeDiff>float(self.msTotalTime/1000):
+                self.running = False
+                self.buttonOn.config(state="normal")
+                self.buttonOff.config(state="disabled")
+    def start(self):
+        if self.numProg != 1:
+            self.canvas.move(self.bar,-self.numProg+1,0)
+            if (-self.numProg+1+35) < 0:
+                textMove = max(-self.numProg+1+35,-929)
+                self.canvas.move(self.time,textMove,0)
+            self.numProg, self.numTime = 1, 1
+        self.startProg = datetime.now()
+        self.running = True
+        self.buttonOn.config(state="disabled")
+        self.buttonOff.config(state="normal")
+        self.advance()
+    def stop(self):
+        self.buttonOn.config(state="normal")
+        self.buttonOff.config(state="disabled")
+        self.running = False
+
+
+
 
 #####
 #Directories
@@ -930,7 +995,6 @@ class dirs():
                 f.write("20000\n")
                 f.write("[0,1,2]\n")
                 f.write("[0,0]\n")
-                f.write("3 minutes; tone from 2:00-2:30 @ 2800hz; shock from 2:28-2:30 (connect shocker to pin 2).\n")
                 f.write("['<BBLHHH', 255, 255, 180000, 1, 2, 0]\n")
                 f.write("[['<LLH', 120000, 150000, 2800]]\n")
                 f.write("[['<LB', 148000, 4], ['<LB', 150000, 4]]\n")
@@ -940,7 +1004,6 @@ class dirs():
             os.makedirs(self.presetDir)
             #Create default examples
             f = open(self.presetDir+"example.txt","w")
-            f.write("3 minutes; tone from 2:00-2:30 @ 2800hz; shock from 2:28-2:30 (connect shocker to pin 2).\n")
             f.write("['<BBLHHH', 255, 255, 180000, 1, 2, 0]\n")
             f.write("[['<LLH', 120000, 150000, 2800]]\n")
             f.write("[['<LB', 148000, 4], ['<LB', 150000, 4]]\n")
@@ -958,27 +1021,26 @@ class dirs():
         elif typeRequired == "photometry":
             lines = [3,4]
         elif typeRequired == "arduino":
-            lines = [5,6,7,8,9]
+            lines = [5,6,7,8]
         elif typeRequired == "saveName":
-            lines = [10]
+            lines = [9]
+        numLines = 10
         if readWrite == "read":
             hold = []
             with open(self.prgmDir+"settings.txt","r") as f:
-                for i in range(11):
+                for i in range(numLines):
                     hold.append(f.readline().strip())
             return hold[lines[0]:lines[-1]+1]
         if readWrite == "write":
             with open(self.prgmDir+"settings.txt","r") as f:
                 hold = []
-                for i in range(11):
+                for i in range(numLines):
                     hold.append(f.readline())
             for i in range(len(lines)):
                 hold[lines[i]] = args[i].strip()+"\n"
             with open(self.prgmDir+"settings.txt","w") as f:
-                for i in range(11):
+                for i in range(numLines):
                     f.write(hold[i])
-
-
 
 #####
 #Arduino Related
@@ -1098,12 +1160,14 @@ dirs.setupMainDirs()
 
 class masterGUI:
     def __init__(self,master):
-        self.mainWindowSize = (1200,700)
         self.singleWidgetDim = 100
         self.master = master
         self.master.title("Fear Control")
         self.master.resizable(width=False, height=False)
         self.timeLabelFont = tkFont.Font(family="Helvetica", size=9)
+        self.labelFont = tkFont.Font(family="Helvetica", size=11)
+        self.labelFontSymbol = tkFont.Font(family="Helvetica", size=10)
+        self.balloon = Pmw.Balloon(master)
         #########################################
         #Give each setup GUI its own box
         ####
@@ -1111,7 +1175,7 @@ class masterGUI:
         #frame
         photometryFrame = tk.LabelFrame(self.master,
             text="Optional Photometry Config.",
-            width = self.singleWidgetDim*2, height = self.singleWidgetDim)
+            width = self.singleWidgetDim*2, height = self.singleWidgetDim,highlightthickness=5)
         photometryFrame.grid(row=0,column=0,sticky=tk.W+tk.E+tk.N+tk.S)
         #var
         self.photometryBool = tk.IntVar()
@@ -1136,8 +1200,8 @@ class masterGUI:
         #main save frame
         saveFileFrame = tk.LabelFrame(self.master,
             text="Data Output Save Location",
-            width = self.singleWidgetDim*2, height = self.singleWidgetDim)
-        saveFileFrame.grid(row=0, column=1, columnspan=1,sticky=tk.W+tk.E+tk.N+tk.S)
+            width = self.singleWidgetDim*2, height = self.singleWidgetDim,highlightthickness=5)
+        saveFileFrame.grid(row=1, column=0, columnspan=1,sticky=tk.W+tk.E+tk.N+tk.S)
         #display save name chosen
         self.saveFileName = tk.StringVar()
 
@@ -1148,9 +1212,11 @@ class masterGUI:
         existingSaveFrame.pack(fill="both", expand="yes")
         self.dirChosen = tk.StringVar()
         lastUsed = dirs.readWriteSettings("saveName","read")[0]
-        self.saveFileName.set("\nMost Recent Save Dir.:\n[{}]".format(lastUsed))
+        self.saveFileName.set("\nLast Used Save Dir.:\n[{}]".format(lastUsed))
         self.dirChosen.set("{: <25}".format(lastUsed.upper()))        
-        self.saveDirListMenu = tk.OptionMenu(existingSaveFrame,self.dirChosen,*self.saveDirList,command=self.saveButtonOptions)
+        self.saveDirListMenu = tk.OptionMenu(existingSaveFrame,self.dirChosen,
+            *self.saveDirList,command=self.saveButtonOptions)
+        self.saveDirListMenu.config(width=20)
         self.saveDirListMenu.grid(sticky = tk.W+tk.E+tk.N+tk.S, columnspan=2)
         #secondary save frames: /new saves
         newSaveFrame = tk.LabelFrame(saveFileFrame, text="Create a New Save Location")
@@ -1165,8 +1231,8 @@ class masterGUI:
         #frame
         ljFrame = tk.LabelFrame(self.master,
             text="LabJack Config.",
-            width=self.singleWidgetDim*2, height = self.singleWidgetDim)
-        ljFrame.grid(row=0,column=2,sticky=tk.W+tk.E+tk.N+tk.S)
+            width=self.singleWidgetDim*2, height = self.singleWidgetDim,highlightthickness=5)
+        ljFrame.grid(row=2,column=0,sticky=tk.W+tk.E+tk.N+tk.S)
         #vars
         self.ljString = tk.StringVar()
         channels, freq = dirs.readWriteSettings("labJack","read")
@@ -1183,64 +1249,186 @@ class masterGUI:
         self.ljTestButton.grid(row=1,column=1,sticky=tk.W+tk.E+tk.N+tk.S)
     #arduino config
         #frame
-        ardBackgroundHeight = 260
+        self.ardBackgroundHeight = 260
         ardFrame = tk.LabelFrame(self.master,
             text = "Arduino Stimuli Config.",
-            width = self.singleWidgetDim*11,height = ardBackgroundHeight)
-        ardFrame.grid(row=10,column=0,columnspan=99,sticky=tk.W+tk.E+tk.N+tk.S)
-        ardCanvas = tk.Canvas(ardFrame, width = 1000+10, height = ardBackgroundHeight+10)
-        ardCanvas.pack()
-        ardCanvas.create_rectangle(0,0, 1000, 
-            ardBackgroundHeight, fill="black",outline="black")
-        ardCanvas.create_rectangle(0,30-1, 1000, 30+1, fill="white")
-        ardCanvas.create_rectangle(0,150-1, 1000, 150+1, fill="white")
-        #grab last used data
-        #(descrip,packet,tone_pack,out_pack,pwm_pack)
+            width = self.singleWidgetDim*11,height = self.ardBackgroundHeight)
+        ardFrame.grid(row=0,rowspan=3,column=1,sticky=tk.W+tk.N+tk.S)
+        tk.Label(ardFrame,
+            text="Last used settings shown. Rollover individual segments for specific stimuli config information.",
+            relief=tk.RAISED).grid(row=0,columnspan=1, sticky=tk.W+tk.E+tk.N+tk.S)
+        #main progress canvas
+        self.ardCanvas = tk.Canvas(ardFrame, width = 1050, height = self.ardBackgroundHeight+10)
+        self.ardCanvas.grid(row=1,column=0)
+        self.canvasInitialize()
+        #progress bar control buttons
+        self.progButtonOn = tk.Button(ardFrame,text="START")
+        self.progButtonOn.grid(row=2,column=0,stick=tk.W)
+        self.progButtonOff = tk.Button(ardFrame,text="STOP")
+        self.progButtonOff.grid(row=3,column=0,stick=tk.W)
+        #grab data and generate progress bar
+        self.grabArdData()
+        #arduino presets
+        self.updateArdPresetSaveList()
+        self.ardPresetChosen = tk.StringVar()
+        self.ardPresetChosen.set("{: <40}".format("(select a preset)"))
+        self.ardPresetMenu = tk.OptionMenu(ardFrame,self.ardPresetChosen,
+            *self.ardPresetSaveList,
+            command= lambda file: self.grabArdData(True,file))
+        self.ardPresetMenu.grid(row=4,column=0,sticky=tk.W)
+    #update window
+        self.updateWindow()
+    def updateArdPresetSaveList(self):
+        self.ardPresetSaveList = []
+        dirListing = os.listdir(dirs.presetDir)
+        for f in dirListing:
+            if f.endswith(".txt"):
+                self.ardPresetSaveList.append(f[:-4].upper())
+    def canvasInitialize(self):
+        #progressbar backdrop
+        self.ardCanvas.create_rectangle(0,0, 1050,self.ardBackgroundHeight, fill="black",outline="black")
+        self.ardCanvas.create_rectangle(0,35-1, 1050, 35+1, fill="white")
+        self.ardCanvas.create_rectangle(0,155-1, 1050, 155+1, fill="white")
+        self.ardCanvas.create_rectangle(0,15-1, 1050, 15+1, fill="white")
+        self.ardCanvas.create_rectangle(0,self.ardBackgroundHeight-5-1,1050, self.ardBackgroundHeight-5+1, fill="white")
+        self.ardCanvas.create_rectangle(0,15, 0, self.ardBackgroundHeight-5,fill="white",outline="white")
+        self.ardCanvas.create_rectangle(1000,15, 1013, self.ardBackgroundHeight-5,fill="white",outline="white")
+            #some labels for each segment
+        self.ardCanvas.create_rectangle(1000,0, 1013, 15,fill="black")
+        self.ardCanvas.create_text(1000+7,15+10,text=u'\u266b',fill="black")
+        self.ardCanvas.create_rectangle(1000,35, 1013, 35,fill="black")
+        self.ardCanvas.create_text(1000+7,35+10,text="S",fill="black")
+        self.ardCanvas.create_text(1000+7,55+10,text="I",fill="black")
+        self.ardCanvas.create_text(1000+7,75+10,text="M",fill="black")
+        self.ardCanvas.create_text(1000+7,95+10,text="P",fill="black")
+        self.ardCanvas.create_text(1000+7,115+10,text="L",fill="black")
+        self.ardCanvas.create_text(1000+7,135+10,text="E",fill="black")
+        self.ardCanvas.create_rectangle(1000,155, 1013, 155,fill="black")
+        self.ardCanvas.create_text(1000+7,175+10,text="P",fill="black")
+        self.ardCanvas.create_text(1000+7,195+10,text="W",fill="black")
+        self.ardCanvas.create_text(1000+7,215+10,text="M",fill="black")
+        self.ardCanvas.create_rectangle(1000,self.ardBackgroundHeight-5, 1013,self.ardBackgroundHeight,fill="black")
+            #label pins as well
+        self.ardCanvas.create_text(1027+6,9,text="PINS",fill="white")
+        self.ardCanvas.create_text(1027+6,15+10,text="10",fill="white")
+        self.ardCanvas.create_text(1027+6,35+10,text="02",fill="white")
+        self.ardCanvas.create_text(1027+6,55+10,text="03",fill="white")
+        self.ardCanvas.create_text(1027+6,75+10,text="04",fill="white")
+        self.ardCanvas.create_text(1027+6,95+10,text="05",fill="white")
+        self.ardCanvas.create_text(1027+6,115+10,text="06",fill="white")
+        self.ardCanvas.create_text(1027+6,135+10,text="07",fill="white")
+        self.ardCanvas.create_text(1027+6,155+10,text="08",fill="white")
+        self.ardCanvas.create_text(1027+6,175+10,text="09",fill="white")
+        self.ardCanvas.create_text(1027+6,195+10,text="11",fill="white")
+        self.ardCanvas.create_text(1027+6,215+10,text="12",fill="white")
+        self.ardCanvas.create_text(1027+6,235+10,text="13",fill="white")
+    def grabArdData(self,destroy=False,loadFromFile=False):
+        #(packet,tone_pack,out_pack,pwm_pack)
+        if loadFromFile is not False:
+            tempHold = presetRead(loadFromFile)
+            dirs.readWriteSettings("arduino","write",*tempHold)
+        if destroy:
+            self.ardCanvas.delete(self.progressShape)
+            self.ardCanvas.delete(self.progressText)
+            for i in self.vertBars:
+                self.ardCanvas.delete(i)
+            for i in self.barTimes:
+                self.ardCanvas.delete(i)
+            for i in self.toneBars:
+                self.balloon.tagunbind(self.ardCanvas,i)
+                self.ardCanvas.delete(i)
+            for i in self.outBars:
+                self.balloon.tagunbind(self.ardCanvas,i)
+                self.ardCanvas.delete(i)
+            for i in self.pwmBars:
+                self.balloon.tagunbind(self.ardCanvas,i)
+                self.ardCanvas.delete(i)
         self.ardData = arduinoGUI(tk.Toplevel())
-        self.ardData.root.quit()
         self.ardData.root.destroy()
         divisor = 5+5*int(self.ardData.packet[3]/300000)
         segment = float(self.ardData.packet[3]/1000)/divisor
+        self.vertBars = [[]]*(1+int(round(segment)))
+        self.barTimes = [[]]*(1+int(round(segment)))
         for i in range(int(round(segment))):
             if i > 0:
-                ardCanvas.create_rectangle(i*(1000.0/segment)-1,0, i*(1000.0/segment)+1, 
-                    ardBackgroundHeight, fill="white")
+                if i%2 != 0:
+                    self.vertBars[i] = self.ardCanvas.create_rectangle(i*(1000.0/segment)-1,15, 
+                        i*(1000.0/segment)+1, self.ardBackgroundHeight-5, 
+                        fill="white")
                 if i%2 == 0:
-                    ardCanvas.create_text(i*(1000.0/segment),ardBackgroundHeight+8,
+                    self.vertBars[i] = self.ardCanvas.create_rectangle(i*(1000.0/segment)-1,15, 
+                        i*(1000.0/segment)+1, self.ardBackgroundHeight, 
+                        fill="white")
+                    self.barTimes[i] = self.ardCanvas.create_text(i*(1000.0/segment),self.ardBackgroundHeight+8,
                         text=printMinFromSec(divisor*i),fill="black",font=self.timeLabelFont)
-        toneData, outData, pwmData = -1, -1, -1
+                if i == int(round(segment))-1 and (i+1)%2 == 0 and (i+1)*(1000.0/segment)<=1001:
+                    if round((i+1)*(1000.0/segment)) != 1000.0:
+                        self.vertBars[i+1] = self.ardCanvas.create_rectangle((i+1)*(1000.0/segment)-1,15, 
+                            (i+1)*(1000.0/segment)+1, self.ardBackgroundHeight, 
+                            fill="white")
+                    elif round((i+1)*(1000.0/segment)) == 1000:
+                        self.vertBars[i+1] = self.ardCanvas.create_rectangle((i+1)*(1000.0/segment)-1,self.ardBackgroundHeight-5, 
+                            (i+1)*(1000.0/segment)+1, self.ardBackgroundHeight, 
+                            fill="white")
+                    self.barTimes[i+1] = self.ardCanvas.create_text((i+1)*(1000.0/segment),self.ardBackgroundHeight+8,
+                        text=printMinFromSec(divisor*(i+1)),fill="black",font=self.timeLabelFont)
+                if i == int(round(segment))-1 and (i+1)%2 != 0 and (i+1)*(1000.0/segment)<=1001:
+                    if round((i+1)*(1000.0/segment)) != 1000.0:
+                        self.vertBars[i+1] = self.ardCanvas.create_rectangle((i+1)*(1000.0/segment)-1,15, 
+                            (i+1)*(1000.0/segment)+1, self.ardBackgroundHeight, 
+                            fill="white")
+                    elif round((i+1)*(1000.0/segment)) == 1000:
+                        self.vertBars[i+1] = self.ardCanvas.create_rectangle((i+1)*(1000.0/segment)-1,self.ardBackgroundHeight-5, 
+                            (i+1)*(1000.0/segment)+1, self.ardBackgroundHeight, 
+                            fill="white")
+        self.toneData, self.outData, self.pwmData = -1, -1, -1
+        self.toneBars = []
         if len(self.ardData.tone_pack) != 0:
-            toneData = self.decodeArdData("tone",self.ardData.tone_pack)
-            for i in toneData:
-                ardCanvas.create_rectangle(i[0],0+10, i[1]+i[0], 30, fill="yellow")
-                ardCanvas.create_text(i[0]+2,11,text="{} Hz".format(i[3]), 
-                    fill="black", anchor = tk.NW)
+            self.toneData = self.decodeArdData("tone",self.ardData.tone_pack)
+            self.toneBars = [[]]*len(self.toneData)
+            for i in range(len(self.toneData)):
+                self.toneBars[i] = self.ardCanvas.create_rectangle(self.toneData[i][0],0+15, 
+                    self.toneData[i][1]+self.toneData[i][0], 35, fill="yellow",outline="white")
+                self.balloon.tagbind(self.ardCanvas,self.toneBars[i],
+                    "{} - {}\n{} Hz".format(printMinFromSec(
+                        self.toneData[i][4]/1000), printMinFromSec(self.toneData[i][5]/1000), 
+                        self.toneData[i][3]))
+        self.outBars = []
         if len(self.ardData.out_pack) != 0:
             pinIDs = [2,3,4,5,6,7]
-            outData = self.decodeArdData("output",self.ardData.out_pack)
-            for i in range(len(outData)):
-                yPosition = 30+(pinIDs.index(outData[i][3]))*20
-                ardCanvas.create_rectangle(outData[i][0],yPosition, 
-                    outData[i][1]+outData[i][0], yPosition+20, fill="yellow")
+            self.outData = self.decodeArdData("output",self.ardData.out_pack)
+            self.outBars = [[]]*len(self.outData)
+            for i in range(len(self.outData)):
+                yPosition = 35+(pinIDs.index(self.outData[i][3]))*20
+                self.outBars[i] = self.ardCanvas.create_rectangle(self.outData[i][0],yPosition, 
+                    self.outData[i][1]+self.outData[i][0], yPosition+20, fill="yellow",outline="white")
+                self.balloon.tagbind(self.ardCanvas,self.outBars[i],
+                    "{} - {}\nPin {}".format(printMinFromSec(
+                        self.outData[i][4]/1000), printMinFromSec(self.outData[i][5]/1000), 
+                        self.outData[i][3]))
+        self.pwmBars = []
         if len(self.ardData.pwm_pack) != 0:
             pinIDs = [8,9,11,12,13]
-            pwmData = self.decodeArdData("pwm",self.ardData.pwm_pack)
-            for i in range(len(pwmData)):
-                yPosition = 150+(pinIDs.index(pwmData[i][3]))*20
-                ardCanvas.create_rectangle(pwmData[i][0],yPosition, 
-                    pwmData[i][1]+pwmData[i][0], yPosition+20, fill="yellow")
-
-
-
-
-
-
-
-            
-            
-        ####
-    #update window
-        self.updateWindow()
+            self.pwmData = self.decodeArdData("pwm",self.ardData.pwm_pack)
+            self.pwmBars = [[]]*len(self.pwmData)
+            for i in range(len(self.pwmData)):
+                yPosition = 155+(pinIDs.index(self.pwmData[i][3]))*20
+                self.pwmBars[i] = self.ardCanvas.create_rectangle(self.pwmData[i][0],yPosition, 
+                    self.pwmData[i][1]+self.pwmData[i][0], yPosition+20, fill="yellow",outline="white")
+                self.balloon.tagbind(self.ardCanvas,self.pwmBars[i],
+                    ("{} - {}\nPin {}\nFreq: {}Hz\nDuty Cycle: {}%\nPhase Shift: {}"+u'\u00b0').format(
+                        printMinFromSec(self.pwmData[i][7]/1000), 
+                        printMinFromSec(self.pwmData[i][8]/1000), 
+                        self.pwmData[i][3],self.pwmData[i][4],self.pwmData[i][5],self.pwmData[i][6]))
+        self.progressShape = self.ardCanvas.create_rectangle(
+            -1,0,1,self.ardBackgroundHeight, fill="red")
+        self.progressText = self.ardCanvas.create_text(35,0,
+            fill="white",anchor=tk.N)
+        progBar = progressBar(self.ardCanvas, 
+            self.progressShape, self.progressText, self.progButtonOn,
+            self.progButtonOff, self.ardData.packet[3])
+        self.progButtonOn.config(command = progBar.start)
+        self.progButtonOff.config(state="disabled",command=progBar.stop)
     def decodeArdData(self,name,dataSource):
         timeSegment = float(self.ardData.packet[3])/1000
         if name == "tone":
@@ -1276,18 +1464,18 @@ class masterGUI:
                 onSpace = 1
             offSpace = 1000-onSpace-startSpace
             if name == "tone":
-                ardData.append([startSpace,onSpace,offSpace,i[3]])
+                ardData.append([startSpace,onSpace,offSpace,i[3],i[start],i[on]])
             elif name == "pwm":
                 ardData.append([startSpace,onSpace,offSpace,
-                    checkBin(i[5],"B")[0],i[4],i[7],i[6]])
+                    checkBin(i[5],"B")[0],i[4],i[7],i[6],i[start],i[on]])
             elif name == "output":
-                ardData.append([startSpace,onSpace,offSpace,i[0]])
+                ardData.append([startSpace,onSpace,offSpace,i[0],i[start],i[on]])
         return ardData
     def updateWindow(self):
         self.master.update_idletasks()
         w = self.master.winfo_screenwidth()
         h = self.master.winfo_screenheight()
-        size = self.mainWindowSize
+        size = tuple(int(_) for _ in self.master.geometry().split('+')[0].split('x'))
         x = w/2 - size[0]/2
         y = h/2 - size[1]/2
         self.master.geometry("%dx%d+%d+%d" % (size + (x, y)))
@@ -1322,6 +1510,8 @@ class masterGUI:
                 tkmb.showinfo("Error!", "Please only use letters [A-Z] for save names.")
             elif self.newSaveEntry.get().upper().strip() in self.saveDirList:
                 tkmb.showinfo("Error!", "You cannot use an existing Save Entry Name; select it from the top dialogue instead.")
+            elif len(self.newSaveEntry.get().upper().strip()) > 20:
+                tkmb.showinfo("Error!", "Please stay under 20 characters.")
             else:
                 ready = 1
                 self.saveDirToUse = str(self.newSaveEntry.get().strip()).capitalize()
@@ -1360,9 +1550,12 @@ class masterGUI:
                     temp = u6.U6()
                     temp.hardReset()
                 except:
-                    tkmb.showinfo("Error!", 
-                        "The LabJack is either unplugged or is malfunctioning.\n\nDisconnect and reconnect, then click OK to try again.")
-                    time.sleep(3)
+                    retry = tkmb.askretrycancel("Error!",
+                        "The LabJack is either unplugged or is malfunctioning.\n\nDisconnect and reconnect the device, then click Retry.")
+                    if retry:
+                        time.sleep(3)
+                    else:
+                        break
             time.sleep(0.001)
 
 
