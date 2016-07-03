@@ -1,7 +1,8 @@
 import Tkinter as tk
 import tkMessageBox as tkmb
-import serial, time, ast, os, sys, platform, glob, threading, thread, copy, Pmw
-import calendar, traceback, re, LabJackPython, math, Queue, struct, u6, tkFont
+import serial, time, os, platform, glob, threading, thread, copy, Pmw
+import calendar, traceback, LabJackPython, Queue, struct, u6, tkFont
+import pickle, sys
 from struct import *
 from u6 import U6
 from operator import itemgetter
@@ -69,10 +70,12 @@ class photometryGUI(GUI):
     def __init__(self,master):
         self.title = "Photometry Options"
         GUI.__init__(self,master)
-        out1, out2 = dirs.readWriteSettings("photometry","read")
-        self.photometryConfig1, self.photometryConfig2 = ast.literal_eval(out1), ast.literal_eval(out2)
-        self.DataCh, self.trueRefCh, self.isosRefCh = map(int,self.photometryConfig1)
-        self.trueRefFreq, self.isosRefFreq = map(int,self.photometryConfig2)
+        self.fpChNum = curSettings.fpLastUsed["chNum"]
+        self.fpMainFreq = curSettings.fpLastUsed["mainFreq"]
+        self.fpIsosFreq = curSettings.fpLastUsed["isosFreq"]
+        self.DataCh, self.trueRefCh, self.isosRefCh = self.fpChNum
+        self.trueRefFreq = self.fpMainFreq
+        self.isosRefFreq = self.fpIsosFreq
     def initialize(self):
         #variables to hold input
         (Data, trueRef, isosRef, 
@@ -82,7 +85,7 @@ class photometryGUI(GUI):
         #Initialize button variables from file:
         self.dataButtons = [Data, trueRef, isosRef]
         for i in range(len(self.dataButtons)):
-            self.dataButtons[i].set(self.photometryConfig1[i])
+            self.dataButtons[i].set(self.fpChNum[i])
         #initialize frames for buttons
         usrMsg = tk.StringVar()
         label = tk.Label(self.root, textvariable = usrMsg, relief = tk.RAISED)
@@ -115,8 +118,8 @@ class photometryGUI(GUI):
         self.E2.pack(side=tk.RIGHT)
         L2 = tk.Label(frequencyFrame,text="Isosbestic Frequency: ")
         L2.pack(side=tk.RIGHT)
-        self.E1.insert(tk.END,"{}".format(str(self.photometryConfig2[0])))
-        self.E2.insert(tk.END,"{}".format(str(self.photometryConfig2[1])))
+        self.E1.insert(tk.END,"{}".format(str(self.fpMainFreq)))
+        self.E2.insert(tk.END,"{}".format(str(self.fpIsosFreq)))
         #button to exit
         doneButton = tk.Button(self.root,text="Finish",command = self.exitButton)
         doneButton.pack(side=tk.BOTTOM)
@@ -128,22 +131,25 @@ class photometryGUI(GUI):
             tempChReport = ["Photometry Data Channel","Main Reference Channel","Isosbestic Reference Channel"]
             tempChReport = tempChReport[self.channelSelected.index(var.get())]
             tkmb.showinfo("Error!", "You already selected \n[Channel {}] \nfor \n[{}]!".format(var.get(),tempChReport))
-            self.dataButtons[i].set(self.photometryConfig1[i])
+            self.dataButtons[i].set(self.fpChNum[i])
         [self.DataCh, self.trueRefCh, self.isosRefCh] = self.channelSelected
-        self.photometryConfig1 = self.channelSelected
+        self.fpChNum = self.channelSelected
     def exitButton(self):
         try:
-            self.trueDataFreq = int(self.E1.get())
-            self.isosDataFreq = int(self.E2.get())
+            self.trueDataFreq = int(self.E1.get().strip())
+            self.isosDataFreq = int(self.E2.get().strip())
             if self.trueDataFreq == 0 or self.isosDataFreq == 0:
                 tkmb.showinfo("Warning!", "Your frequencies must be higher than 0 Hz!")
             elif self.trueDataFreq == self.isosDataFreq:
                 tkmb.showinfo("Warning!", "You should not use the same Frequency for both sample and isosbestic stimulation.")
             else:
-                self.photometryConfig2 = self.trueDataFreq, self.isosDataFreq
+                self.fpMainFreq = self.trueDataFreq
+                self.fpIsosFreq = self.isosDataFreq
                 self.root.destroy()
-                dirs.readWriteSettings("photometry","write",
-                    *[str(self.photometryConfig1),str(self.photometryConfig2)])
+                curSettings.fpLastUsed = {
+                    "chNum":self.fpChNum,
+                    "mainFreq":self.fpMainFreq,
+                    "isosFreq":self.fpIsosFreq}
                 self.root.quit()
         except ValueError:
             tkmb.showinfo("Error!", "You must enter integer options into both frequency fields.")
@@ -152,19 +158,14 @@ class labJackGUI(GUI):
         self.MAX_REQUESTS, self.SMALL_REQUEST = 0, 0
         self.stlFctr, self.ResIndx = 1, 0
         self.ljSaveName = ""
-        channels, freq = dirs.readWriteSettings("labJack","read")
-        self.chNum, self.scanFreq = ast.literal_eval(channels), int(freq)
+        self.chNum = curSettings.ljLastUsed["chNum"]
+        self.scanFreq = curSettings.ljLastUsed["scanFreq"]
         self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
         self.title = "LabJack Options"
         GUI.__init__(self,master)
         self.updatePresetSaveList()
     def updatePresetSaveList(self):
-        self.presetSaveList = []
-        dirListing = os.listdir(dirs.prgmDir)
-        dirListing.remove("settings.txt")
-        for f in dirListing:
-            if f.endswith(".txt"):
-                self.presetSaveList.append(f[:-4].upper())
+        self.presetSaveList = [i for i in curSettings.ljPresets]
     def setup(self):
         leftFrame = tk.LabelFrame(self.root, text="Manual Configuration")
         leftFrame.grid(row=0,column=0)
@@ -258,21 +259,17 @@ class labJackGUI(GUI):
                 tkmb.showinfo("Error!", 
                         "You must give your Preset a name.")
             elif len(saveName) != 0:
-                if saveName == "settings":
-                    tkmb.showinfo("Error!", 
-                        "You cannot overwrite the primary [Settings] preset\n\nChoose another name.")
-                elif not os.path.isfile(dirs.prgmDir+saveName+".txt"):
-                    with open(dirs.prgmDir+saveName+".txt","w") as f:
-                        f.write(str(self.chNum)+"\n"+str(self.scanFreq)+"\n")
-                        tkmb.showinfo("Saved!", "Preset saved as [{}]".format(saveName.upper()))
-                        menu = self.savePresetList.children["menu"]
-                        menu.add_command(label=saveName.upper(),
-                            command = lambda f=saveName: self.listChoose(f))
-                elif os.path.isfile(dirs.prgmDir+saveName+".txt"):
-                    if tkmb.askyesno("Overwrite", "[{}] already exists.\nOverwrite this preset?".format(saveName.upper())):
-                        with open(dirs.prgmDir+saveName+".txt","w") as f:
-                            f.write(str(self.chNum)+"\n"+str(self.scanFreq)+"\n")
-                            tkmb.showinfo("Saved!", "Preset saved as [{}]".format(saveName.upper()))
+                if saveName not in curSettings.ljPresets:
+                    curSettings.ljPresets[saveName] = {"chNum":self.chNum,"scanFreq":self.scanFreq}
+                    tkmb.showinfo("Saved!", "Preset saved as [{}]".format(saveName))
+                    menu = self.savePresetList.children["menu"]
+                    menu.add_command(label=saveName,
+                            command = lambda name=saveName: self.listChoose(name))
+                    self.presetChosen.set(saveName)
+                elif saveName in curSettings.ljPresets:
+                    if tkmb.askyesno("Overwrite?", "[{}] already exists.\nOverwrite this preset?".format(saveName)):
+                        curSettings.ljPresets[saveName] = {"chNum":self.chNum,"scanFreq":self.scanFreq}
+                        tkmb.showinfo("Saved!", "Preset saved as [{}]".format(saveName))
     def exitButton(self):
         validity = self.checkInputValidity()
         if validity == 1:
@@ -280,46 +277,48 @@ class labJackGUI(GUI):
             self.root.quit()
     def checkInputValidity(self):
         validity = 0
-        try:
-            self.scanFreq = int(self.E1.get())
-            maxFreq = int(50000/self.nCh)
-            if self.scanFreq == 0:
-                tkmb.showinfo("Error!", "Scan frequency must be higher than 0 Hz.")
-            elif self.scanFreq > maxFreq:
-                tkmb.showinfo("Error!", 
-                    "SCAN_FREQ x NUM_CHANNELS must be lower than 50,000Hz.\n\nMax [{} Hz] right now with [{}] Channels in use.".format(maxFreq,self.nCh))
-            else:
-                validity = 1
-                dirs.readWriteSettings("labJack","write",
-                    *[str(self.chNum),str(self.scanFreq)])
-        except ValueError:
-            tkmb.showinfo("Error!", "Scan Frequency must be an integer in Hz.")
+        buttonState = []
+        for i in self.buttonVars:
+            buttonState.append(i.get())
+        if 1 not in buttonState:
+            tkmb.showinfo("Error!", "You must pick at least one channel to record from.")
+        else:
+            try:
+                self.scanFreq = int(self.E1.get())
+                maxFreq = int(50000/self.nCh)
+                if self.scanFreq == 0:
+                    tkmb.showinfo("Error!", "Scan frequency must be higher than 0 Hz.")
+                elif self.scanFreq > maxFreq:
+                    tkmb.showinfo("Error!", 
+                        "SCAN_FREQ x NUM_CHANNELS must be lower than 50,000Hz.\n\nMax [{} Hz] right now with [{}] Channels in use.".format(maxFreq,self.nCh))
+                else:
+                    validity = 1
+                    curSettings.ljLastUsed["chNum"] = self.chNum
+                    curSettings.ljLastUsed["scanFreq"] = self.scanFreq
+            except ValueError:
+                tkmb.showinfo("Error!", "Scan Frequency must be an integer in Hz.")
         return validity
-    def listChoose(self,fileName):
-        with open(dirs.prgmDir+fileName+".txt") as f:
-            self.chNum = map(int,ast.literal_eval(f.readline().strip()))
-            self.scanFreq = int(f.readline().strip())
-            for i in range(14):
-                self.buttonVars[i].set(0)
-            for i in self.chNum:
-                self.buttonVars[i].set(1)
-            self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
-            self.E1.delete(0,"end")
-            self.E1.insert(tk.END,self.scanFreq)
+    def listChoose(self,saveName):
+        self.presetChosen.set(saveName)
+        self.chNum = curSettings.ljPresets[saveName]["chNum"]
+        self.scanFreq = curSettings.ljPresets[saveName]["scanFreq"]
+        for i in range(14):
+            self.buttonVars[i].set(0)
+        for i in self.chNum:
+            self.buttonVars[i].set(1)
+        self.nCh, self.chOpt = len(self.chNum), [0]*len(self.chNum)
+        self.E1.delete(0,"end")
+        self.E1.insert(tk.END,self.scanFreq)
 class arduinoGUI(GUI):
     def __init__(self,master):
         self.root = master
         self.title = "none"
         GUI.__init__(self,master)
         ##pull last used settings
-        self.serPort = dirs.readWriteSettings("serial","read")[0]
-        (self.packet,self.tone_pack,self.out_pack,
-            self.pwm_pack) = dirs.readWriteSettings("arduino","read")
-        [self.packet, self.tone_pack,self.out_pack, self.pwm_pack] = [
-        ast.literal_eval(self.packet), 
-        ast.literal_eval(self.tone_pack),
-        ast.literal_eval(self.out_pack), 
-        ast.literal_eval(self.pwm_pack)]
+        self.serPort = curSettings.serPort
+        self.baudRate = 115200
+        [self.packet,self.tone_pack,
+            self.out_pack,self.pwm_pack] = curSettings.quickArd()
     def setup(self):
         if self.types == "TONE":
             columns = 1
@@ -499,45 +498,6 @@ class arduinoGUI(GUI):
 
 
 """
-    def outputSetup(self):
-
-    def pwmSetup(self):
-
-
-
-
-
-
-        for row in range(100):
-            tk.Label(self.frame, text="%s" % row, width=3, borderwidth="1", 
-                     relief="solid").grid(row=row, column=0)
-            t="this is the second column for row %s" %row
-            tk.Label(self.frame, text=t).grid(row=row, column=1)
-
-
-
-    def getFileList(self):
-        self.presetFileList = []
-        if os.path.exists(dirs.presetDir):
-            for f in os.listdir(dirs.presetDir):
-                if f.endswith(".txt"):
-                    self.presetFileList.append(f)
-        else:
-            os.makedirs(dirs.presetDir)
-
-"""
-"""
-def get_time():
-    global total_time
-    while True:
-        total_time = (raw_input("How long is the total experiment? Seconds: ")).lower()
-        try:
-            total_time = int(total_time)*1000
-            break
-        except ValueError:
-            print "You must enter an integer in seconds"
-            continue
-    return total_time
 def get_data_errorCheck(ask_data,types,bestLen,starts,middles,ends,dataHold):
     global total_time
     on, off, on_time, off_time, freq, pins, refr, dutyCycle, phase = [-1]*9
@@ -656,7 +616,7 @@ def get_data(types):
     global total_time
     starts, middles, ends, dataHold = {}, {}, {}, {}
     if types in ["tone","output"]:
-        name, bestLen = types.upper(), 3
+        name, bestLen = types, 3
     elif types == "pwm":
         name, bestLen = "FREQUENCY_MODULATION", 6
     gfxSetup(types)
@@ -734,7 +694,7 @@ def retrieveSettings(ask_file, allFiles):
         print gfxBar(40,1,">>>EXISTING SETTINGS AND DESCRIPTIONS: ")
         for i in allFiles:
             f = open(presetDir+i,"r")
-            print "["+i[:-4].upper()+"]: "+f.readline().lower()
+            print "["+i[:-4]+"]: "+f.readline().lower()
             f.close()
         print "#"*30
         print "\nInput one of the above settings to continue."
@@ -865,16 +825,21 @@ def printDigits(num,places,front=True,placeHolder=" "):
         return placeHolder*(places-len(str(num)))+str(num)
     elif not front:
         return str(num)+placeHolder*(places-len(str(num)))
-def printMinFromSec(secs,ms=False):
+def printMinFromSec(secs,ms=False,option=None):
     sec = int(secs)%60
     mins = int(secs)//60
     if ms:
         millis = int((secs - int(secs))*1000)
-        return "{}:{}.{}".format(printDigits(mins,2,True,"0"),
+        output = "{}:{}.{}".format(printDigits(mins,2,True,"0"),
             printDigits(sec,2,True,"0"),printDigits(millis,3,True,"0"))
     elif not ms:
-        return "{}:{}".format(printDigits(mins,2,True,"0"),
+        output = "{}:{}".format(printDigits(mins,2,True,"0"),
             printDigits(sec,2,True,"0"))
+    if option == "min":
+        output = printDigits(mins,2,True,"0")
+    elif option == "sec":
+        output = printDigits(sec,2,True,"0")
+    return output
 def getDay(options=0):
     i = datetime.now()
     hour = printDigits(i.hour,2,True,"0")
@@ -911,12 +876,11 @@ def deepCopyLists(outer,inner):
     for i in range(outer):
         hold.append(copy.deepcopy([copy.deepcopy([])]*inner))
     return hold
-def presetRead(fileName):
-    with open(dirs.presetDir+fileName+".txt") as f:
-        hold = []
-        for i in range(4):
-            hold.append(f.readline())
-    return hold
+def limitStringLength(string, length):
+    if len(string) <= length:
+        return string
+    else:
+        return string[:length-3]+"..."
 class progressBar(threading.Thread):
     def __init__(self, canvas, bar, time, buttonOn, buttonOff, msTotalTime):
         threading.Thread.__init__(self)
@@ -971,79 +935,77 @@ class progressBar(threading.Thread):
 #####
 #Directories
 class dirs():
+    """
+        file formats:
+        .frcl: main settings type
+        .csv: labjack output (standard format for analysis)
+        """
     def __init__(self):
         self.userhome = os.path.expanduser('~')
-        self.baseDir = self.userhome+"/desktop/arduinoControl/"
-        self.presetDir = self.baseDir+"UserPresets/"
-        self.prgmDir = self.baseDir+"prgmSettings/"
-        self.saveDir = self.baseDir+"outputSaves/"
+        self.saveDir = self.userhome+"/desktop/frCntrlSaves/"
         self.resultsDir = ""
-    def setupMainDirs(self):
-        if not os.path.exists(self.prgmDir):
-            os.makedirs(self.prgmDir)
-            #Create default examples
-            with open(self.prgmDir+"example preset.txt","w") as f:
-                f.write("[0,1,2,3]\n")
-                f.write("5000\n")
-        if not os.path.isfile(self.prgmDir+"settings.txt"):
-            #Just in case settings.txt is deleted but not prgmDir:
-            #we will make settings.txt anyway
-            with open(self.prgmDir+"settings.txt","w") as f:
+        if not os.path.isfile(self.userhome+"/frSettings.frcl"):
+            #Create settings file if does not exist
+            with open(self.userhome+"/frSettings.frcl","wb") as f:
                 #these are example presets
-                f.write("/dev/cu.usbmodem1421\n")
-                f.write("[0,2]\n")
-                f.write("20000\n")
-                f.write("[0,1,2]\n")
-                f.write("[0,0]\n")
-                f.write("['<BBLHHH', 255, 255, 180000, 1, 2, 0]\n")
-                f.write("[['<LLH', 120000, 150000, 2800]]\n")
-                f.write("[['<LB', 148000, 4], ['<LB', 150000, 4]]\n")
-                f.write("[]\n")
-                f.write("Tiange\n")
-        if not os.path.exists(self.presetDir):
-            os.makedirs(self.presetDir)
-            #Create default examples
-            f = open(self.presetDir+"example.txt","w")
-            f.write("['<BBLHHH', 255, 255, 180000, 1, 2, 0]\n")
-            f.write("[['<LLH', 120000, 150000, 2800]]\n")
-            f.write("[['<LB', 148000, 4], ['<LB', 150000, 4]]\n")
-            f.write("[]\n")
-            f.close()
+                settings = mainSettings()
+                pickle.dump(settings, f)
         if not os.path.exists(self.saveDir):
-            os.makedirs(self.saveDir+"Tiange/")
-    def readWriteSettings(self,typeRequired,readWrite,*args):
-        #RETURNS LISTS OF STRINGS
-        #CONVERT LOCALLY TO FORMAT REQUIRED!
-        if typeRequired == "serial":
-            lines = [0]
-        elif typeRequired == "labJack":
-            lines = [1,2]
-        elif typeRequired == "photometry":
-            lines = [3,4]
-        elif typeRequired == "arduino":
-            lines = [5,6,7,8]
-        elif typeRequired == "saveName":
-            lines = [9]
-        numLines = 10
-        if readWrite == "read":
-            hold = []
-            with open(self.prgmDir+"settings.txt","r") as f:
-                for i in range(numLines):
-                    hold.append(f.readline().strip())
-            return hold[lines[0]:lines[-1]+1]
-        if readWrite == "write":
-            with open(self.prgmDir+"settings.txt","r") as f:
-                hold = []
-                for i in range(numLines):
-                    hold.append(f.readline())
-            for i in range(len(lines)):
-                hold[lines[i]] = args[i].strip()+"\n"
-            with open(self.prgmDir+"settings.txt","w") as f:
-                for i in range(numLines):
-                    f.write(hold[i])
+            os.makedirs(self.saveDir)
 
 #####
-#Arduino Related
+#Main settings
+class mainSettings():
+    """only called if settings.frcl does not exist
+    otherwise pickle.load() to create mainSettings
+    object holds all relevant setting parameters
+    """
+    def __init__(self):
+        #last used
+        if sys.platform.startswith('win'):
+            self.serPort = "COM1"
+        else:
+            self.serPort = "/dev/tty.usbmodem1421"
+        self.saveDir = ""
+        self.fpLastUsed = {"chNum":[0,1,2],"mainFreq":211,"isosFreq":531}
+        self.ljLastUsed = {"chNum":[],"scanFreq":0}
+        self.ardLastUsed = {
+            "packet":['<BBLHHH', 255, 255, 0, 0, 0, 0],
+            "tone_pack":[], 
+            "out_pack":[],
+            "pwm_pack":[]}
+        #presets
+        self.ljPresets = {"example":
+            {
+            "chNum":[0,1,2,10,11],
+            "scanFreq":6250
+            }}
+        self.ardPresets = {"example":
+            {
+            "packet":['<BBLHHH', 255, 255, 180000, 1, 2, 0],
+            "tone_pack":[['<LLH', 120000, 150000, 2800]], 
+            "out_pack":[['<LB', 148000, 4], ['<LB', 150000, 4]],
+            "pwm_pack":[]
+            }}
+    def checkDirs(self):
+        if self.saveDir != "":
+            if not os.path.isdir(dirs.saveDir+self.saveDir):
+                os.makedirs(dirs.saveDir+self.saveDir)
+    def quickArd(self):
+        return [
+            self.ardLastUsed["packet"],
+            self.ardLastUsed["tone_pack"],
+            self.ardLastUsed["out_pack"],
+            self.ardLastUsed["pwm_pack"]]
+    def quickLJ(self):
+        return [
+            self.ljLastUsed["chNum"],
+            self.ljLastUsed["scanFreq"]]
+    def quickFP(self):
+        return [
+            self.fpLastUsed["chNum"],
+            self.fpLastUsed["mainFreq"],
+            self.fpLastUsed["isosFreq"]]
 
 
 #####
@@ -1150,11 +1112,8 @@ cameraSaveName = ""
 
 
 
-##############################################################################################################
-#=================================================PROGRAM====================================================#
-##############################################################################################################
-dirs = dirs()
-dirs.setupMainDirs()
+
+
 
 
 
@@ -1168,6 +1127,9 @@ class masterGUI:
         self.labelFont = tkFont.Font(family="Helvetica", size=11)
         self.labelFontSymbol = tkFont.Font(family="Helvetica", size=10)
         self.balloon = Pmw.Balloon(master)
+        self.resultsDirUsed = {}
+        self.makeSaveDir = 0
+        self.saveDirNamesUsed = []
         #########################################
         #Give each setup GUI its own box
         ####
@@ -1181,7 +1143,7 @@ class masterGUI:
         self.photometryBool = tk.IntVar()
         self.photometryBool.set(0)
         self.photometryString = tk.StringVar()
-        self.photometryString.set("\n[N/A]")
+        self.photometryString.set("\n[N/A]\n")
         #buttons
         self.photometryCheck = tk.Checkbutton(photometryFrame,
             text="Toggle Photometry On/Off",
@@ -1211,11 +1173,13 @@ class masterGUI:
         existingSaveFrame = tk.LabelFrame(saveFileFrame, text="Select a Save Name")
         existingSaveFrame.pack(fill="both", expand="yes")
         self.dirChosen = tk.StringVar()
-        lastUsed = dirs.readWriteSettings("saveName","read")[0]
-        self.saveFileName.set("\nLast Used Save Dir.:\n[{}]".format(lastUsed))
-        self.dirChosen.set("{: <25}".format(lastUsed.upper()))        
-        self.saveDirListMenu = tk.OptionMenu(existingSaveFrame,self.dirChosen,
-            *self.saveDirList,command=self.saveButtonOptions)
+        self.saveFileName.set("Last Used Save Dir.:\n[{}]".format(limitStringLength(curSettings.saveDir.upper(),20)))
+        self.dirChosen.set("{: <25}".format(curSettings.saveDir))
+        if len(self.saveDirList) == 0:
+            self.saveDirListMenu = tk.OptionMenu(existingSaveFrame,self.dirChosen," "*15)
+        else:
+            self.saveDirListMenu = tk.OptionMenu(existingSaveFrame,self.dirChosen,
+                *self.saveDirList,command=self.saveButtonOptions)
         self.saveDirListMenu.config(width=20)
         self.saveDirListMenu.grid(sticky = tk.W+tk.E+tk.N+tk.S, columnspan=2)
         #secondary save frames: /new saves
@@ -1235,7 +1199,8 @@ class masterGUI:
         ljFrame.grid(row=2,column=0,sticky=tk.W+tk.E+tk.N+tk.S)
         #vars
         self.ljString = tk.StringVar()
-        channels, freq = dirs.readWriteSettings("labJack","read")
+        channels = curSettings.ljLastUsed["chNum"]
+        freq = curSettings.ljLastUsed["scanFreq"]
         self.ljString.set("Channels:\n{}\n\nScan Freq: [{}Hz]".format(channels,freq))
         #current state string
         self.ljLabel = tk.Label(ljFrame, textvariable=self.ljString)
@@ -1256,16 +1221,16 @@ class masterGUI:
         ardFrame.grid(row=0,rowspan=3,column=1,sticky=tk.W+tk.N+tk.S)
         tk.Label(ardFrame,
             text="Last used settings shown. Rollover individual segments for specific stimuli config information.",
-            relief=tk.RAISED).grid(row=0,columnspan=1, sticky=tk.W+tk.E+tk.N+tk.S)
+            relief=tk.RAISED).grid(row=0,columnspan=100, sticky=tk.W+tk.E+tk.N+tk.S)
         #main progress canvas
         self.ardCanvas = tk.Canvas(ardFrame, width = 1050, height = self.ardBackgroundHeight+10)
-        self.ardCanvas.grid(row=1,column=0)
+        self.ardCanvas.grid(row=1,column=0,columnspan=100)
         self.canvasInitialize()
         #progress bar control buttons
         self.progButtonOn = tk.Button(ardFrame,text="START")
-        self.progButtonOn.grid(row=2,column=0,stick=tk.W)
+        self.progButtonOn.grid(row=4,column=0,stick=tk.W+tk.S+tk.N+tk.E)
         self.progButtonOff = tk.Button(ardFrame,text="STOP")
-        self.progButtonOff.grid(row=3,column=0,stick=tk.W)
+        self.progButtonOff.grid(row=5,column=0,stick=tk.W+tk.S+tk.N+tk.E)
         #grab data and generate progress bar
         self.grabArdData()
         #arduino presets
@@ -1275,15 +1240,40 @@ class masterGUI:
         self.ardPresetMenu = tk.OptionMenu(ardFrame,self.ardPresetChosen,
             *self.ardPresetSaveList,
             command= lambda file: self.grabArdData(True,file))
-        self.ardPresetMenu.grid(row=4,column=0,sticky=tk.W)
+        self.ardPresetMenu.grid(row=6,column=0,columnspan=4,sticky=tk.W+tk.S+tk.N+tk.E)
+        self.ardPresetMenu.config(width=10)
+        #total experiment time config
+        tk.Label(ardFrame,text="Total Experiment Time:").grid(row=3,column=0,sticky=tk.W+tk.S+tk.N+tk.E)
+        lastUsedTime = curSettings.ardLastUsed["packet"][3]/1000
+        self.totalMinEntry = tk.Entry(ardFrame,width=2)
+        self.totalMinEntry.grid(row=3,column=1,sticky=tk.W+tk.S+tk.N+tk.E)
+        self.totalMinEntry.insert(tk.END,"{}".format(printMinFromSec(lastUsedTime,option="min")))
+        tk.Label(ardFrame,text=":").grid(row=3,column=2,sticky=tk.W+tk.S+tk.N+tk.E)
+        self.totalSecEntry = tk.Entry(ardFrame,width=2)
+        self.totalSecEntry.grid(row=3,column=3,sticky=tk.W+tk.S+tk.N+tk.E)
+        self.totalSecEntry.insert(tk.END,"{}".format(printMinFromSec(lastUsedTime,option="sec")))
+        tk.Label(ardFrame,text="MM",font=self.timeLabelFont).grid(row=4,column=1,sticky=tk.W+tk.N+tk.E)
+        tk.Label(ardFrame,text="SS",font=self.timeLabelFont).grid(row=4,column=3,sticky=tk.W+tk.N+tk.E)
+
+
+        """
+        def get_time():
+            global total_time
+            while True:
+                total_time = (raw_input("How long is the total experiment? Seconds: ")).lower()
+                try:
+                    total_time = int(total_time)*1000
+                    break
+                except ValueError:
+                    print "You must enter an integer in seconds"
+                    continue
+            return total_time
+        """
+
     #update window
         self.updateWindow()
     def updateArdPresetSaveList(self):
-        self.ardPresetSaveList = []
-        dirListing = os.listdir(dirs.presetDir)
-        for f in dirListing:
-            if f.endswith(".txt"):
-                self.ardPresetSaveList.append(f[:-4].upper())
+        self.ardPresetSaveList = [i for i in curSettings.ardPresets]
     def canvasInitialize(self):
         #progressbar backdrop
         self.ardCanvas.create_rectangle(0,0, 1050,self.ardBackgroundHeight, fill="black",outline="black")
@@ -1322,11 +1312,17 @@ class masterGUI:
         self.ardCanvas.create_text(1027+6,195+10,text="11",fill="white")
         self.ardCanvas.create_text(1027+6,215+10,text="12",fill="white")
         self.ardCanvas.create_text(1027+6,235+10,text="13",fill="white")
-    def grabArdData(self,destroy=False,loadFromFile=False):
+    def grabArdData(self,destroy=False,load=False):
         #(packet,tone_pack,out_pack,pwm_pack)
-        if loadFromFile is not False:
-            tempHold = presetRead(loadFromFile)
-            dirs.readWriteSettings("arduino","write",*tempHold)
+        if load is not False:
+            #then load is a setting name
+            curSettings.ardLastUsed = curSettings.ardPresets[load]
+            #update total time fields
+            lastUsedTime = curSettings.ardLastUsed["packet"][3]/1000
+            self.totalMinEntry.delete(0,tk.END)
+            self.totalSecEntry.delete(0,tk.END)
+            self.totalMinEntry.insert(tk.END,"{}".format(printMinFromSec(lastUsedTime,option="min")))
+            self.totalSecEntry.insert(tk.END,"{}".format(printMinFromSec(lastUsedTime,option="sec")))
         if destroy:
             self.ardCanvas.delete(self.progressShape)
             self.ardCanvas.delete(self.progressText)
@@ -1424,11 +1420,11 @@ class masterGUI:
             -1,0,1,self.ardBackgroundHeight, fill="red")
         self.progressText = self.ardCanvas.create_text(35,0,
             fill="white",anchor=tk.N)
-        progBar = progressBar(self.ardCanvas, 
+        self.progBar = progressBar(self.ardCanvas, 
             self.progressShape, self.progressText, self.progButtonOn,
             self.progButtonOff, self.ardData.packet[3])
-        self.progButtonOn.config(command = progBar.start)
-        self.progButtonOff.config(state="disabled",command=progBar.stop)
+        self.progButtonOn.config(command=self.progBarRun)
+        self.progButtonOff.config(state="disabled",command=self.progBar.stop)
     def decodeArdData(self,name,dataSource):
         timeSegment = float(self.ardData.packet[3])/1000
         if name == "tone":
@@ -1482,9 +1478,9 @@ class masterGUI:
     def photometryOnOff(self):
         if self.photometryBool.get() == 1:
             self.startGUIButton.config(state="normal")
-            channels, freq = dirs.readWriteSettings("photometry","read")
-            state = "Channels: {}\nScan Freq: {}".format(channels,
-                    list(ast.literal_eval(freq)))
+            chNum, mainFreq, isosFreq = curSettings.quickFP()
+            state = "Channels: {}\nMain Freq: {}Hz\nIsos Freq: {}Hz".format(chNum,
+                mainFreq, isosFreq)
             self.photometryString.set(state)
         elif self.photometryBool.get() == 0:
             self.startGUIButton.config(state="disabled")
@@ -1494,46 +1490,68 @@ class masterGUI:
         configRun = photometryGUI(config)
         configRun.initialize()
         configRun.run()
-        state = "Channels: {}\nScan Freq: {}".format(configRun.photometryConfig1,
-            list(configRun.photometryConfig2))
+        state = "Channels: {}\nMain Freq: {}Hz\nIsos Freq: {}Hz".format(
+            configRun.fpChNum,
+            configRun.fpMainFreq, 
+            configRun.fpIsosFreq)
         self.photometryString.set(state)
     def grabSaveList(self):
-        self.saveDirList = [d.upper() for d in os.listdir(dirs.saveDir) if os.path.isdir(dirs.saveDir+d)]
-        if len(self.saveDirList) == 0:
-            os.makedirs(dirs.saveDir+"Tiange")
-            self.saveDirList = [d.upper() for d in os.listdir(dirs.saveDir) if os.path.isdir(dirs.saveDir+d)]      
-    def saveButtonOptions(self,inputs):
+        self.saveDirList = [d for d in os.listdir(dirs.saveDir) if os.path.isdir(dirs.saveDir+d)]
+    def saveButtonOptions(self,inputs,runExp=False):
         self.grabSaveList()
         ready = 0
         if inputs == "**new**save**&!@":
-            if not re.match("^[a-z]*$", self.newSaveEntry.get().strip().lower()) or len(self.newSaveEntry.get().strip()) == 0:
-                tkmb.showinfo("Error!", "Please only use letters [A-Z] for save names.")
-            elif self.newSaveEntry.get().upper().strip() in self.saveDirList:
-                tkmb.showinfo("Error!", "You cannot use an existing Save Entry Name; select it from the top dialogue instead.")
-            elif len(self.newSaveEntry.get().upper().strip()) > 20:
-                tkmb.showinfo("Error!", "Please stay under 20 characters.")
+            newSaveEntry = self.newSaveEntry.get().strip().lower()
+            if newSaveEntry in self.saveDirList or newSaveEntry in self.saveDirNamesUsed:
+                tkmb.showinfo("Error!", 
+                    "You cannot use an existing Save Entry Name; select it from the top dialogue instead.")
+            elif len(newSaveEntry) == 0:
+                tkmb.showinfo("Error!", 
+                    "Please enter a name for your save directory.")
             else:
                 ready = 1
-                self.saveDirToUse = str(self.newSaveEntry.get().strip()).capitalize()
                 menu = self.saveDirListMenu.children["menu"]
-                menu.add_command(label=self.saveDirToUse.upper(),
-                    command = lambda Dir=self.saveDirToUse.upper(): self.saveButtonOptions(Dir))
+                if len(self.saveDirList) == 0:
+                    menu.delete(0,tk.END)
+                self.saveDirToUse = str(newSaveEntry)
                 self.dirChosen.set(self.saveDirToUse)
+                menu.add_command(label=self.saveDirToUse,
+                        command = lambda Dir=self.saveDirToUse: self.saveButtonOptions(Dir))
+                self.saveDirNamesUsed.append(self.saveDirToUse)   
         else:
             ready = 1
             self.dirChosen.set(inputs)
-            self.saveDirToUse = str(self.dirChosen.get()).upper()
+            self.saveDirToUse = str(self.dirChosen.get())
         if ready == 1:
-            preresultsDir = str(dirs.saveDir)+self.saveDirToUse+"/"+getDay(2)+"/"
-            dirs.resultsDir = preresultsDir+"Session started at ["+getDay(3)+"]/" 
-            os.makedirs(dirs.resultsDir)
-            self.saveFileName.set("\nCurrently Selected:\n["+self.saveDirToUse.upper()+"]")
-            dirs.readWriteSettings("saveName","write",str(self.saveDirToUse.upper()))
+            self.preresultsDir = str(dirs.saveDir)+self.saveDirToUse+"/"
+            if self.preresultsDir not in self.resultsDirUsed:
+                dirs.resultsDir = self.preresultsDir+"{} at [{}]/".format(getDay(2),getDay(3)) 
+                self.makeSaveDir = 1
+            else:
+                dirs.resultsDir = self.resultsDirUsed[self.preresultsDir]
+                self.makeSaveDir = 0
+            self.saveFileName.set("Currently Selected:\n[{}]".format(limitStringLength(self.saveDirToUse.upper(),20)))
+            curSettings.saveDir = self.saveDirToUse
+    def progBarRun(self):
+        if len(self.saveDirList) == 0 and len(self.resultsDirUsed) == 0 and curSettings.saveDir == "":
+            tkmb.showinfo("Error!","You must first create a directory to save data output.")
+        else:
+            if len(self.resultsDirUsed) == 0:
+                self.preresultsDir = str(dirs.saveDir)+curSettings.saveDir+"/"
+                dirs.resultsDir = self.preresultsDir+"{} at [{}]/".format(getDay(2),getDay(3))
+                self.makeSaveDir = 1
+                self.saveFileName.set("Currently Selected:\n[{}]".format(limitStringLength(curSettings.saveDir.upper(),20)))
+            if self.makeSaveDir == 1 or not os.path.isdir(dirs.resultsDir):
+                os.makedirs(dirs.resultsDir)
+                self.resultsDirUsed[self.preresultsDir] = dirs.resultsDir
+                self.makeSaveDir = 0
+                self.grabSaveList()
+            self.progBar.start()   
     def ljConfig(self):
         config = tk.Toplevel(self.master)
         configRun = labJackGUI(config)
         configRun.setup()
-        channels,freq = dirs.readWriteSettings("labJack","read")
+        channels,freq = curSettings.quickLJ()
         self.ljString.set("Channels:\n{}\n\nScan Freq: [{}Hz]".format(channels,freq))
     def ljTest(self):
         while True:
@@ -1561,32 +1579,27 @@ class masterGUI:
 
 
 
-
-
-root = tk.Tk()
-k=masterGUI(root)
-root.mainloop()
-
-
-
-"""
-startGUI = startGUI()
-startGUI.initialize()
-startGUI.run()
-
-if startGUI.guiOption == "p":
-    photometryGUI = photometryGUI(dirs.prgmDir+"settings.txt")
-    photometryGUI.initialize()
-    photometryGUI.run()
-
-saveLocationGUI=saveLocationGUI()
-saveLocationGUI.initialize()
-saveLocationGUI.run()
-
-arduino = arduino()
-labJackGUI = labJackGUI()
-labJackGUI.setup()
+#################################################################
+#Program Here
+#set up all required directories
+dirs = dirs()
+#load last used settings
+with open(dirs.userhome+"/frSettings.frcl","rb") as settingsFile:
+    curSettings = pickle.load(settingsFile)
+    curSettings.checkDirs()
+#run main program
+mainPrgm = masterGUI(tk.Tk())
+mainPrgm.master.mainloop()
+#save settings for next load
+with open(dirs.userhome+"/frSettings.frcl","wb") as settingsFile:
+    pickle.dump(curSettings, settingsFile)
+#################################################################
 
 """
+from pprint import pprint
+pprint (vars(curSettings))
+"""
+
+
 
 
