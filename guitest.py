@@ -13,6 +13,7 @@ import sys
 from struct import *
 from datetime import datetime
 from operator import itemgetter
+from pprint import pprint
 
 import numpy as np
 import Tkinter as Tk
@@ -66,22 +67,22 @@ def get_day(options=0):
     minute = '{:0>2}'.format(i.minute)
     second = '{:0>2}'.format(i.second)
     if options == 0 or options == 'day':
-        return "%s/%s/%s" % (i.year, i.month, i.day)
+        return '%s/%s/%s' % (i.year, i.month, i.day)
     elif options == 1 or options == 'daytime':
-        return "%s-%s-%s [%s-%s-%s]" % (i.year, i.month, i.day,
+        return '%s-%s-%s [%s-%s-%s]' % (i.year, i.month, i.day,
                                         hour, minute, second)
     elif options == 2 or options == 'day2':
-        return "%s-%s-%s" % (i.year, i.month, i.day)
+        return '%s-%s-%s' % (i.year, i.month, i.day)
     elif options == 3 or options == 'time':
         if i.hour > 12:
-            hour = str(i.hour-12)+"pm"
+            hour = str(i.hour-12)+'pm'
         if i.hour == 12:
-            hour = "12pm"
+            hour = '12pm'
         if i.hour < 12:
-            hour = str(i.hour)+"am"
+            hour = str(i.hour)+'am'
         if i.hour == 0:
-            hour = "12am"
-        return "%s-%s-%s" % (hour, minute, second)
+            hour = '12am'
+        return '%s-%s-%s' % (hour, minute, second)
 
 
 def check_binary(num, register):
@@ -94,10 +95,10 @@ def check_binary(num, register):
         List
     """
     dicts = {}
-    if register == "D":
+    if register == 'D':
         dicts = {1: 0, 2: 1, 4: 2, 8: 3,
                  16: 4, 32: 5, 64: 6, 128: 7}
-    elif register == "B":
+    elif register == 'B':
         dicts = {1: 8, 2: 9, 4: 10,
                  8: 11, 16: 12, 32: 13}
     store = []
@@ -124,7 +125,7 @@ def limit_string_length(string, length):
     if len(string) <= length:
         return string
     else:
-        return string[:length-3]+"..."
+        return string[:length-3]+'...'
 
 
 def list_serial_ports():
@@ -162,24 +163,25 @@ class MasterGUI(object):
     def __init__(self, master):
         self.single_widget_dim = 100
         self.master = master
-        self.master.title("Fear Control")
+        self.master.title('Fear Control')
         self.master.resizable(width=False, height=False)
-        self.time_label_font = tkFont.Font(family="Helvetica", size=9)
-        self.label_font = tkFont.Font(family="Helvetica", size=11)
-        self.label_font_symbol = tkFont.Font(family="Helvetica", size=10)
+        self.time_label_font = tkFont.Font(family='Helvetica', size=9)
+        self.label_font = tkFont.Font(family='Helvetica', size=11)
+        self.label_font_symbol = tkFont.Font(family='Helvetica', size=10)
         # noinspection PyUnresolvedReferences
         self.balloon = Pmw.Balloon(master)
         self.results_dir_used = {}
         self.make_save_dir = 0
         self.save_dir_name_used = []
         self.ALL = Tk.N + Tk.E + Tk.S + Tk.W
+        self.ttl_time = dirs.settings.ard_last_used['packet'][3]
         #########################################
         # Give each setup GUI its own box
         #########################################
         # Photometry Config
         # Frame
         photometry_frame = Tk.LabelFrame(self.master,
-                                         text="Optional Photometry Config.",
+                                         text='Optional Photometry Config.',
                                          width=self.single_widget_dim*2,
                                          height=self.single_widget_dim,
                                          highlightthickness=5)
@@ -188,26 +190,26 @@ class MasterGUI(object):
         self.fp_bool = Tk.IntVar()
         self.fp_bool.set(0)
         self.fp_str_var = Tk.StringVar()
-        self.fp_str_var.set("\n[N/A]\n")
+        self.fp_str_var.set('\n[N/A]\n')
         # Buttons
         self.fp_checkbutton = Tk.Checkbutton(photometry_frame,
-                                             text="Toggle Photometry On/Off",
+                                             text='Toggle Photometry On/Off',
                                              variable=self.fp_bool,
                                              onvalue=1, offvalue=0,
                                              command=self.fp_toggle)
         self.fp_checkbutton.pack()
         self.start_gui_button = Tk.Button(photometry_frame,
-                                          text="CONFIG",
+                                          text='CONFIG',
                                           command=self.fp_config)
         self.start_gui_button.pack()
-        self.start_gui_button.config(state="disabled")
+        self.start_gui_button.config(state='disabled')
         Tk.Label(photometry_frame, textvariable=self.fp_str_var).pack()
         #########################################
         # Save File Config
         self.grab_save_list()
         # Primary Save Frame
         save_frame = Tk.LabelFrame(self.master,
-                                   text="Data Output Save Location",
+                                   text='Data Output Save Location',
                                    width=self.single_widget_dim*2,
                                    height=self.single_widget_dim,
                                    highlightthickness=5)
@@ -219,19 +221,20 @@ class MasterGUI(object):
         save_file_label = Tk.Label(save_frame,
                                    textvariable=self.save_file_name,
                                    relief=Tk.RAISED)
-        save_file_label.pack(side=Tk.TOP, expand="yes", fill="both")
+        save_file_label.pack(side=Tk.TOP, expand='yes', fill='both')
         # Secondary Save Frame: Existing Saves
         existing_frame = Tk.LabelFrame(save_frame,
-                                       text="Select a Save Name")
-        existing_frame.pack(fill="both", expand="yes")
+                                       text='Select a Save Name')
+        existing_frame.pack(fill='both', expand='yes')
         self.dir_chosen = Tk.StringVar()
         self.save_file_name.set('Last Used Save Dir.:'
-                                '\n[{}]'.format(limit_string_length(dirs.settings.save_dir.upper(), 20)))
-        self.dir_chosen.set("{: <25}".format(dirs.settings.save_dir))
+                                '\n[{}]'.format(limit_string_length(dirs.settings.save_dir.upper(),
+                                                                    20)))
+        self.dir_chosen.set('{: <25}'.format(dirs.settings.save_dir))
         if len(self.save_dir_list) == 0:
             self.save_dir_menu = Tk.OptionMenu(existing_frame,
                                                self.dir_chosen,
-                                               " "*15)
+                                               ' '*15)
         else:
             self.save_dir_menu = Tk.OptionMenu(existing_frame,
                                                self.dir_chosen,
@@ -241,31 +244,31 @@ class MasterGUI(object):
         self.save_dir_menu.config(width=20)
         self.save_dir_menu.grid(sticky=self.ALL, columnspan=2)
         # Secondary Save Frame: New Saves
-        new_frame = Tk.LabelFrame(save_frame, text="Create a New Save Location")
-        new_frame.pack(fill="both", expand="yes")
+        new_frame = Tk.LabelFrame(save_frame, text='Create a New Save Location')
+        new_frame.pack(fill='both', expand='yes')
         self.new_save_entry = Tk.Entry(save_frame)
         self.new_save_entry.pack(side=Tk.TOP)
         Tk.Button(save_frame,
-                  text="Create New",
+                  text='Create New',
                   command=lambda:
                   self.save_button_options(new=True)).pack(side=Tk.TOP)
         #########################################
         # LabJack Config
         # Frame
         lj_frame = Tk.LabelFrame(self.master,
-                                 text="LabJack Config.",
+                                 text='LabJack Config.',
                                  width=self.single_widget_dim*2,
                                  height=self.single_widget_dim,
                                  highlightthickness=5)
         lj_frame.grid(row=2, column=0, sticky=self.ALL)
         # Variables
         self.lj_str_var = Tk.StringVar()
-        channels = dirs.settings.lj_last_used["ch_num"]
-        freq = dirs.settings.lj_last_used["scan_freq"]
-        self.lj_str_var.set("Channels:\n"
-                            "{}\n\n"
-                            "Scan Freq: "
-                            "[{}Hz]".format(channels, freq))
+        channels = dirs.settings.lj_last_used['ch_num']
+        freq = dirs.settings.lj_last_used['scan_freq']
+        self.lj_str_var.set('Channels:\n'
+                            '{}\n\n'
+                            'Scan Freq: '
+                            '[{}Hz]'.format(channels, freq))
         # Current State Report
         self.lj_label = Tk.Label(lj_frame, textvariable=self.lj_str_var)
         self.lj_label.grid(row=0,
@@ -274,13 +277,13 @@ class MasterGUI(object):
                            sticky=self.ALL)
         # Config Button
         self.lj_config_button = Tk.Button(lj_frame,
-                                          text="CONFIG",
+                                          text='CONFIG',
                                           command=self.lj_config)
         self.lj_config_button.grid(row=1,
                                    column=0,
                                    sticky=self.ALL)
         self.lj_test_button = Tk.Button(lj_frame,
-                                        text="Test LabJack",
+                                        text='Test LabJack',
                                         command=self.lj_test)
         self.lj_test_button.grid(row=1,
                                  column=1,
@@ -291,7 +294,7 @@ class MasterGUI(object):
         self.ard_preset_list = []
         self.ard_bckgrd_height = 260
         ard_frame = Tk.LabelFrame(self.master,
-                                  text="Arduino Stimuli Config.",
+                                  text='Arduino Stimuli Config.',
                                   width=self.single_widget_dim*11,
                                   height=self.ard_bckgrd_height)
         ard_frame.grid(row=0,
@@ -299,12 +302,19 @@ class MasterGUI(object):
                        column=1,
                        sticky=self.ALL)
         Tk.Label(ard_frame,
-                 text="Last used settings shown. "
-                      "Rollover individual segments for "
-                      "specific stimuli config information.",
+                 text='Last used settings shown. '
+                      'Rollover individual segments for '
+                      'specific stimuli config information.',
                  relief=Tk.RAISED).grid(row=0,
-                                        columnspan=100,
+                                        columnspan=80,
                                         sticky=self.ALL)
+        # Debug Button (Prints all attributes of dirs.settings)
+        Tk.Button(ard_frame,
+                  text='DEBUG',
+                  command=lambda: pprint(vars(dirs.settings))).grid(row=0,
+                                                                    column=80,
+                                                                    columnspan=20,
+                                                                    sticky=self.ALL)
         # Main Progress Canvas
         self.ard_canvas = Tk.Canvas(ard_frame,
                                     width=1050,
@@ -314,84 +324,112 @@ class MasterGUI(object):
                              columnspan=100)
         self.canvas_init()
         # Progress Bar Control Buttons
+        bs_row = 5
         self.prog_on = Tk.Button(ard_frame,
-                                 text="START")
-        self.prog_on.grid(row=4,
-                          column=0,
+                                 text='START')
+        self.prog_on.grid(row=bs_row,
+                          column=4,
                           stick=self.ALL)
         self.prog_off = Tk.Button(ard_frame,
-                                  text="STOP")
-        self.prog_off.grid(row=5,
-                           column=0,
+                                  text='STOP')
+        self.prog_off.grid(row=bs_row+1,
+                           column=4,
                            stick=self.ALL)
         # Grab Data and Generate Progress Bar
         self.grab_ard_data()
         # Arduino Presets
+        as_row = 7
         self.update_ard_preset_list()
         self.ard_preset_chosen = Tk.StringVar()
-        self.ard_preset_chosen.set("{: <40}".format("(select a preset)"))
+        self.ard_preset_chosen.set('{: <40}'.format('(select a preset)'))
         self.ard_preset_menu = Tk.OptionMenu(ard_frame,
                                              self.ard_preset_chosen,
                                              *self.ard_preset_list,
                                              command=lambda file_in:
                                              self.grab_ard_data(True, file_in))
-        self.ard_preset_menu.grid(row=6,
+        self.ard_preset_menu.grid(row=as_row,
                                   column=0,
                                   columnspan=4,
                                   sticky=self.ALL)
         self.ard_preset_menu.config(width=10)
+        # Manual Arduino Setup
         # Total Experiment Time Config
+        ts_row = 3
+        Tk.Label(ard_frame, text='MM',
+                 font=self.time_label_font).grid(row=ts_row, column=1, sticky=self.ALL)
+
+        Tk.Label(ard_frame, text='SS',
+                 font=self.time_label_font).grid(row=ts_row, column=3, sticky=self.ALL)
         Tk.Label(ard_frame,
-                 text="Total Experiment Time:").grid(row=3,
+                 text='Total Experiment Time:').grid(row=ts_row+1,
                                                      column=0,
                                                      sticky=self.ALL)
-        last_used_time = dirs.settings.ard_last_used["packet"][3]/1000
-        self.min_entry = Tk.Entry(ard_frame,
-                                  width=2)
-        self.min_entry.grid(row=3,
-                            column=1,
-                            sticky=self.ALL)
+        # Minutes
+        self.min_entry = Tk.Entry(ard_frame, width=2)
+        self.min_entry.grid(row=ts_row+1, column=1, sticky=self.ALL)
         self.min_entry.insert(Tk.END,
-                              "{}".format(min_from_sec(last_used_time,
-                                                       option="min")))
-        Tk.Label(ard_frame,
-                 text=":").grid(row=3,
-                                column=2,
-                                sticky=self.ALL)
-        self.sec_entry = Tk.Entry(ard_frame,
-                                  width=2)
-        self.sec_entry.grid(row=3,
-                            column=3,
-                            sticky=self.ALL)
+                              '{}'.format(min_from_sec(self.ttl_time/1000, option='min')))
+        Tk.Label(ard_frame, text=':').grid(row=ts_row+1, column=2, sticky=self.ALL)
+        # Seconds
+        self.sec_entry = Tk.Entry(ard_frame, width=2)
+        self.sec_entry.grid(row=ts_row+1, column=3, sticky=self.ALL)
         self.sec_entry.insert(Tk.END,
-                              "{}".format(min_from_sec(last_used_time,
-                                                       option="sec")))
-        Tk.Label(ard_frame,
-                 text="MM",
-                 font=self.time_label_font).grid(row=4,
-                                                 column=1,
-                                                 sticky=self.ALL)
-        Tk.Label(ard_frame,
-                 text="SS",
-                 font=self.time_label_font).grid(row=4,
-                                                 column=3,
-                                                 sticky=self.ALL)
-        """
-        def get_time():
-            global total_time
-            while True:
-                total_time = (raw_input("How long is the total experiment? Seconds: ")).lower()
-                try:
-                    total_time = int(total_time)*1000
-                    break
-                except ValueError:
-                    print "You must enter an integer in seconds"
-                    continue
-            return total_time
-        """
-
+                              '{}'.format(min_from_sec(self.ttl_time/1000,
+                                                       option='sec')))
+        Tk.Button(ard_frame, text='Confirm', command=self.get_ttl_time).grid(row=ts_row+1, column=4, sticky=Tk.W)
+        # Tone Config
+        Tk.Button(ard_frame,
+                  text='Tone Setup',
+                  command=lambda types='tone':
+                  self.ard_config(types)).grid(row=5, column=0, sticky=self.ALL)
+        Tk.Button(ard_frame,
+                  text='PWM Setup',
+                  command=lambda types='pwm':
+                  self.ard_config(types)).grid(row=5, column=1, columnspan=3,
+                                               sticky=self.ALL)
+        Tk.Button(ard_frame,
+                  text='Simple Outputs',
+                  command=lambda types='output':
+                  self.ard_config(types)).grid(row=6, column=0, sticky=self.ALL)
         # Update Window
         self.update_window()
+
+    def get_ttl_time(self):
+        """
+        Gets total exp time from GUI input
+        """
+        try:
+            # Grab Inputs
+            mins = int(self.min_entry.get().strip())
+            secs = int(self.sec_entry.get().strip())
+            mins += secs//60
+            secs %= 60
+            # Update Fields if improper format entered
+            self.min_entry.delete(0, Tk.END)
+            self.min_entry.insert(Tk.END, '{:0>2}'.format(mins))
+            self.sec_entry.delete(0, Tk.END)
+            self.sec_entry.insert(Tk.END, '{:0>2}'.format(secs))
+            # Update Vairbales
+            self.ttl_time = (mins*60+secs)*1000
+            dirs.settings.ard_last_used['packet'][3] = self.ttl_time
+            self.grab_ard_data(destroy=True)
+        except ValueError:
+            tkMb.showinfo('Error!',
+                          'Time must be entered as integers')
+
+    def ard_config(self, types):
+        """
+        Presents the requested Arduino GUI
+        """
+        config = Tk.Toplevel(self.master)
+        config_run = ArduinoGUI(config)
+        if types == 'tone':
+            config_run.tone_setup()
+        elif types == 'output':
+            config_run.output_setup()
+        elif types == 'pwm':
+            config_run.pwm_setup()
+        config_run.run()
 
     def update_ard_preset_list(self):
         """
@@ -406,100 +444,101 @@ class MasterGUI(object):
         # Backdrop
         self.ard_canvas.create_rectangle(0, 0,
                                          1050, self.ard_bckgrd_height,
-                                         fill="black", outline="black")
+                                         fill='black', outline='black')
         self.ard_canvas.create_rectangle(0, 35-1,
                                          1050, 35+1,
-                                         fill="white")
+                                         fill='white')
         self.ard_canvas.create_rectangle(0, 155-1,
                                          1050, 155+1,
-                                         fill="white")
+                                         fill='white')
         self.ard_canvas.create_rectangle(0, 15-1,
                                          1050, 15+1,
-                                         fill="white")
+                                         fill='white')
         self.ard_canvas.create_rectangle(0, self.ard_bckgrd_height-5-1,
                                          1050, self.ard_bckgrd_height-5+1,
-                                         fill="white")
+                                         fill='white')
         self.ard_canvas.create_rectangle(0, 15,
                                          0, self.ard_bckgrd_height-5,
-                                         fill="white", outline="white")
+                                         fill='white', outline='white')
         self.ard_canvas.create_rectangle(1000, 15,
                                          1013, self.ard_bckgrd_height-5,
-                                         fill="white", outline="white")
+                                         fill='white', outline='white')
         # Type Labels
         self.ard_canvas.create_rectangle(1000, 0,
                                          1013, 15,
-                                         fill="black")
+                                         fill='black')
         self.ard_canvas.create_text(1000+7, 15+10,
-                                    text=u'\u266b', fill="black")
+                                    text=u'\u266b', fill='black')
         self.ard_canvas.create_rectangle(1000, 35,
                                          1013, 35,
-                                         fill="black")
+                                         fill='black')
         self.ard_canvas.create_text(1000+7, 35+10,
-                                    text="S", fill="black")
+                                    text='S', fill='black')
         self.ard_canvas.create_text(1000+7, 55+10,
-                                    text="I", fill="black")
+                                    text='I', fill='black')
         self.ard_canvas.create_text(1000+7, 75+10,
-                                    text="M", fill="black")
+                                    text='M', fill='black')
         self.ard_canvas.create_text(1000+7, 95+10,
-                                    text="P", fill="black")
+                                    text='P', fill='black')
         self.ard_canvas.create_text(1000+7, 115+10,
-                                    text="L", fill="black")
+                                    text='L', fill='black')
         self.ard_canvas.create_text(1000+7, 135+10,
-                                    text="E", fill="black")
+                                    text='E', fill='black')
         self.ard_canvas.create_rectangle(1000, 155,
                                          1013, 155,
-                                         fill="black")
+                                         fill='black')
         self.ard_canvas.create_text(1000+7, 175+10,
-                                    text="P", fill="black")
+                                    text='P', fill='black')
         self.ard_canvas.create_text(1000+7, 195+10,
-                                    text="W", fill="black")
+                                    text='W', fill='black')
         self.ard_canvas.create_text(1000+7, 215+10,
-                                    text="M", fill="black")
+                                    text='M', fill='black')
         self.ard_canvas.create_rectangle(1000, self.ard_bckgrd_height-5,
                                          1013, self.ard_bckgrd_height,
-                                         fill="black")
+                                         fill='black')
         # Arduino Pin Labels
         self.ard_canvas.create_text(1027+6, 9,
-                                    text="PINS", fill="white")
+                                    text='PINS', fill='white')
         self.ard_canvas.create_text(1027+6, 15+10,
-                                    text="10", fill="white")
+                                    text='10', fill='white')
         self.ard_canvas.create_text(1027+6, 35+10,
-                                    text="02", fill="white")
+                                    text='02', fill='white')
         self.ard_canvas.create_text(1027+6, 55+10,
-                                    text="03", fill="white")
+                                    text='03', fill='white')
         self.ard_canvas.create_text(1027+6, 75+10,
-                                    text="04", fill="white")
+                                    text='04', fill='white')
         self.ard_canvas.create_text(1027+6, 95+10,
-                                    text="05", fill="white")
+                                    text='05', fill='white')
         self.ard_canvas.create_text(1027+6, 115+10,
-                                    text="06", fill="white")
+                                    text='06', fill='white')
         self.ard_canvas.create_text(1027+6, 135+10,
-                                    text="07", fill="white")
+                                    text='07', fill='white')
         self.ard_canvas.create_text(1027+6, 155+10,
-                                    text="08", fill="white")
+                                    text='08', fill='white')
         self.ard_canvas.create_text(1027+6, 175+10,
-                                    text="09", fill="white")
+                                    text='09', fill='white')
         self.ard_canvas.create_text(1027+6, 195+10,
-                                    text="11", fill="white")
+                                    text='11', fill='white')
         self.ard_canvas.create_text(1027+6, 215+10,
-                                    text="12", fill="white")
+                                    text='12', fill='white')
         self.ard_canvas.create_text(1027+6, 235+10,
-                                    text="13", fill="white")
+                                    text='13', fill='white')
 
     def grab_ard_data(self, destroy=False, load=False):
         """
         Obtain arduino data from saves
         """
+        # If load is false, then we load from settings.frcl
         if load is not False:
             # Then load must be a preset name.
-            dirs.settings.ard_last_used = dirs.settings.ard_presets[load]
+            dirs.settings.ard_last_used = copy.deepcopy(dirs.settings.ard_presets[load])
             # Update Total Time Fields
             last_used_time = dirs.settings.ard_last_used['packet'][3]/1000
             self.min_entry.delete(0, Tk.END)
             self.sec_entry.delete(0, Tk.END)
-            self.min_entry.insert(Tk.END, "{}".format(min_from_sec(last_used_time,
+            self.min_entry.insert(Tk.END, '{}'.format(min_from_sec(last_used_time,
                                                                    option='min')))
-            self.sec_entry.insert(Tk.END, "{}".format(min_from_sec(last_used_time,
+            self.sec_entry.insert(Tk.END, '{}'.format(min_from_sec(last_used_time,
                                                                    option='sec')))
         if destroy:
             self.ard_canvas.delete(self.progress_shape)
@@ -530,17 +569,17 @@ class MasterGUI(object):
                                                                       15,
                                                                       i*(1000.0/segment)+1,
                                                                       self.ard_bckgrd_height-5,
-                                                                      fill="white")
+                                                                      fill='white')
                 if i % 2 == 0:
                     self.v_bars[i] = self.ard_canvas.create_rectangle(i*(1000.0/segment)-1,
                                                                       15,
                                                                       i*(1000.0/segment)+1,
                                                                       self.ard_bckgrd_height,
-                                                                      fill="white")
+                                                                      fill='white')
                     self.bar_times[i] = self.ard_canvas.create_text(i*(1000.0/segment),
                                                                     self.ard_bckgrd_height+8,
                                                                     text=min_from_sec(divisor*i),
-                                                                    fill="black",
+                                                                    fill='black',
                                                                     font=self.time_label_font)
                 if i == int(round(segment))-1 and (i+1) % 2 == 0 and (i+1)*(1000.0/segment) <= 1001:
                     if round((i+1)*(1000.0/segment)) != 1000.0:
@@ -548,17 +587,17 @@ class MasterGUI(object):
                                                                             15,
                                                                             (i+1)*(1000.0/segment)+1,
                                                                             self.ard_bckgrd_height,
-                                                                            fill="white")
+                                                                            fill='white')
                     elif round((i+1)*(1000.0/segment)) == 1000:
                         self.v_bars[i+1] = self.ard_canvas.create_rectangle((i+1)*(1000.0/segment)-1,
                                                                             self.ard_bckgrd_height-5,
                                                                             (i+1)*(1000.0/segment)+1,
                                                                             self.ard_bckgrd_height,
-                                                                            fill="white")
+                                                                            fill='white')
                     self.bar_times[i+1] = self.ard_canvas.create_text((i+1)*(1000.0/segment),
                                                                       self.ard_bckgrd_height+8,
                                                                       text=min_from_sec(divisor*(i+1)),
-                                                                      fill="black",
+                                                                      fill='black',
                                                                       font=self.time_label_font)
                 if i == int(round(segment))-1 and (i+1) % 2 != 0 and (i+1)*(1000.0/segment) <= 1001:
                     if round((i+1)*(1000.0/segment)) != 1000.0:
@@ -566,27 +605,27 @@ class MasterGUI(object):
                                                                             15,
                                                                             (i+1)*(1000.0/segment)+1,
                                                                             self.ard_bckgrd_height,
-                                                                            fill="white")
+                                                                            fill='white')
                     elif round((i+1)*(1000.0/segment)) == 1000:
                         self.v_bars[i+1] = self.ard_canvas.create_rectangle((i+1)*(1000.0/segment)-1,
                                                                             self.ard_bckgrd_height-5,
                                                                             (i+1)*(1000.0/segment)+1,
                                                                             self.ard_bckgrd_height,
-                                                                            fill="white")
+                                                                            fill='white')
         self.tone_data, self.out_data, self.pwm_data = -1, -1, -1
         self.tone_bars = []
         if len(self.ard_data.tone_pack) != 0:
-            self.tone_data = self.decode_ard_data("tone", self.ard_data.tone_pack)
+            self.tone_data = self.decode_ard_data('tone', self.ard_data.tone_pack)
             self.tone_bars = [[]]*len(self.tone_data)
             for i in range(len(self.tone_data)):
                 self.tone_bars[i] = self.ard_canvas.create_rectangle(self.tone_data[i][0],
                                                                      0+15,
                                                                      self.tone_data[i][1]+self.tone_data[i][0],
-                                                                     35, fill="yellow",
-                                                                     outline="white")
+                                                                     35, fill='yellow',
+                                                                     outline='white')
                 self.balloon.tagbind(self.ard_canvas,
                                      self.tone_bars[i],
-                                     "{} - {}\n{} Hz".format(
+                                     '{} - {}\n{} Hz'.format(
                                          min_from_sec(
                                              self.tone_data[i][4]/1000),
                                          min_from_sec(
@@ -595,7 +634,7 @@ class MasterGUI(object):
         self.out_bars = []
         if len(self.ard_data.out_pack) != 0:
             pin_ids = range(2, 8)
-            self.out_data = self.decode_ard_data("output",
+            self.out_data = self.decode_ard_data('output',
                                                  self.ard_data.out_pack)
             self.out_bars = [[]]*len(self.out_data)
             for i in range(len(self.out_data)):
@@ -604,11 +643,11 @@ class MasterGUI(object):
                                                                     y_pos,
                                                                     self.out_data[i][1]+self.out_data[i][0],
                                                                     y_pos+20,
-                                                                    fill="yellow",
-                                                                    outline="white")
+                                                                    fill='yellow',
+                                                                    outline='white')
                 self.balloon.tagbind(self.ard_canvas,
                                      self.out_bars[i],
-                                     "{} - {}\nPin {}".format(
+                                     '{} - {}\nPin {}'.format(
                                          min_from_sec(
                                              self.out_data[i][4]/1000),
                                          min_from_sec(
@@ -618,7 +657,7 @@ class MasterGUI(object):
         if len(self.ard_data.pwm_pack) != 0:
             pin_ids = range(8, 14)
             pin_ids.remove(10)
-            self.pwm_data = self.decode_ard_data("pwm", self.ard_data.pwm_pack)
+            self.pwm_data = self.decode_ard_data('pwm', self.ard_data.pwm_pack)
             self.pwm_bars = [[]]*len(self.pwm_data)
             for i in range(len(self.pwm_data)):
                 y_pos = 155+(pin_ids.index(self.pwm_data[i][3]))*20
@@ -626,14 +665,14 @@ class MasterGUI(object):
                                                                     y_pos,
                                                                     self.pwm_data[i][1]+self.pwm_data[i][0],
                                                                     y_pos+20,
-                                                                    fill="yellow", outline="white")
+                                                                    fill='yellow', outline='white')
                 self.balloon.tagbind(self.ard_canvas,
                                      self.pwm_bars[i],
-                                     ("{} - {}\n"
-                                      "Pin {}\n"
-                                      "Freq: {}Hz\n"
-                                      "Duty Cycle: {}%\n"
-                                      "Phase Shift: {}"+u'\u00b0').format(
+                                     ('{} - {}\n'
+                                      'Pin {}\n'
+                                      'Freq: {}Hz\n'
+                                      'Duty Cycle: {}%\n'
+                                      'Phase Shift: {}'+u'\u00b0').format(
                                          min_from_sec(self.pwm_data[i][7]/1000),
                                          min_from_sec(self.pwm_data[i][8]/1000),
                                          self.pwm_data[i][3],
@@ -642,9 +681,9 @@ class MasterGUI(object):
                                          self.pwm_data[i][6]))
         self.progress_shape = self.ard_canvas.create_rectangle(-1, 0,
                                                                1, self.ard_bckgrd_height,
-                                                               fill="red")
+                                                               fill='red')
         self.progress_text = self.ard_canvas.create_text(35, 0,
-                                                         fill="white",
+                                                         fill='white',
                                                          anchor=Tk.N)
         self.progbar = ProgressBar(self.ard_canvas,
                                    self.progress_shape,
@@ -750,7 +789,7 @@ class MasterGUI(object):
             self.fp_str_var.set(state)
         elif self.fp_bool.get() == 0:
             self.start_gui_button.config(state=Tk.DISABLED)
-            self.fp_str_var.set("\n[N/A]")
+            self.fp_str_var.set('\n[N/A]')
 
     def fp_config(self):
         """
@@ -759,9 +798,10 @@ class MasterGUI(object):
         config = Tk.Toplevel(self.master)
         config_run = PhotometryGUI(config)
         config_run.run()
-        state = "Channels: {}\nMain Freq: {}Hz\nIsos Freq: {}Hz".format(config_run.ch_num,
-                                                                        config_run.stim_freq['main'],
-                                                                        config_run.stim_freq['isos'])
+        state = 'Channels: {}\nMain Freq: ' \
+                '{}Hz\nIsos Freq: {}Hz'.format(config_run.ch_num,
+                                               config_run.stim_freq['main'],
+                                               config_run.stim_freq['isos'])
         self.fp_str_var.set(state)
 
     def grab_save_list(self):
@@ -792,7 +832,7 @@ class MasterGUI(object):
                               'for your save directory.')
             else:
                 ready = 1
-                menu = self.save_dir_menu.children["menu"]
+                menu = self.save_dir_menu.children['menu']
                 if len(self.save_dir_list) == 0:
                     menu.delete(0, Tk.END)
                 self.save_dir_to_use = str(new_save_entry)
@@ -806,15 +846,15 @@ class MasterGUI(object):
             self.dir_chosen.set(inputs)
             self.save_dir_to_use = str(self.dir_chosen.get())
         if ready == 1:
-            self.preresults_dir = str(dirs.main_save_dir)+self.save_dir_to_use+"/"
+            self.preresults_dir = str(dirs.main_save_dir)+self.save_dir_to_use+'/'
             if self.preresults_dir not in self.results_dir_used:
-                dirs.results_dir = self.preresults_dir+"{} at [{}]/".format(get_day(2), get_day(3))
+                dirs.results_dir = self.preresults_dir+'{} at [{}]/'.format(get_day(2), get_day(3))
                 self.make_save_dir = 1
             else:
                 dirs.results_dir = self.results_dir_used[self.preresults_dir]
                 self.make_save_dir = 0
             self.save_file_name.set(
-                "Currently Selected:\n[{}]".format(
+                'Currently Selected:\n[{}]'.format(
                     limit_string_length(self.save_dir_to_use.upper(), 20)
                 )
             )
@@ -824,16 +864,16 @@ class MasterGUI(object):
         """
         Check if valid settings, make directories, and start progress bar
         """
-        if len(self.save_dir_list) == 0 and len(self.results_dir_used) == 0 and dirs.settings.save_dir == "":
-            tkMb.showinfo("Error!",
-                          "You must first create a directory to save data output.")
+        if len(self.save_dir_list) == 0 and len(self.results_dir_used) == 0 and dirs.settings.save_dir == '':
+            tkMb.showinfo('Error!',
+                          'You must first create a directory to save data output.')
         else:
             if len(self.results_dir_used) == 0:
-                self.preresults_dir = str(dirs.main_save_dir)+dirs.settings.save_dir+"/"
-                dirs.results_dir = self.preresults_dir+"{} at [{}]/".format(get_day(2),
+                self.preresults_dir = str(dirs.main_save_dir)+dirs.settings.save_dir+'/'
+                dirs.results_dir = self.preresults_dir+'{} at [{}]/'.format(get_day(2),
                                                                             get_day(3))
                 self.make_save_dir = 1
-                self.save_file_name.set("Currently Selected:\n[{}]".format(
+                self.save_file_name.set('Currently Selected:\n[{}]'.format(
                     limit_string_length(
                         dirs.settings.save_dir.upper(),
                         20)))
@@ -852,8 +892,8 @@ class MasterGUI(object):
         config_run = LabJackGUI(config)
         config_run.run()
         channels, freq = dirs.settings.quick_lj()
-        self.lj_str_var.set("Channels:\n{}\n"
-                            "\nScan Freq: [{}Hz]".format(channels,
+        self.lj_str_var.set('Channels:\n{}\n'
+                            '\nScan Freq: [{}Hz]'.format(channels,
                                                          freq))
 
     @staticmethod
@@ -868,19 +908,19 @@ class MasterGUI(object):
                 time.sleep(0.5)
                 temp = u6.U6()
                 temp.hardReset()
-                tkMb.showinfo("Success!",
-                              "The LabJack has been properly configured")
+                tkMb.showinfo('Success!',
+                              'The LabJack has been properly configured')
                 break
             except LabJackPython.NullHandleException:
                 try:
                     temp = u6.U6()
                     temp.hardReset()
                 except LabJackPython.NullHandleException:
-                    retry = tkMb.askretrycancel("Error!",
-                                                "The LabJack is either unplugged "
-                                                "or is malfunctioning.\n\n"
-                                                "Disconnect and reconnect the device, "
-                                                "then click Retry.")
+                    retry = tkMb.askretrycancel('Error!',
+                                                'The LabJack is either unplugged '
+                                                'or is malfunctioning.\n\n'
+                                                'Disconnect and reconnect the device, '
+                                                'then click Retry.')
                     if retry:
                         time.sleep(3)
                     else:
@@ -1336,6 +1376,22 @@ class ArduinoGUI(GUI):
         [self.packet, self.tone_pack,
          self.out_pack, self.pwm_pack] = dirs.settings.quick_ard()
 
+    def confirm(self, types):
+        """
+        Checks inputs are valid and exits
+        """
+        validity = False
+        if types == 'tone':
+            pass
+        elif types == 'pwm':
+            pass
+        elif types == 'output':
+            pass
+        validity = True
+        if validity:
+            self.root.destroy()
+            self.root.quit()
+
     def button_toggle(self, tags):
         """
         Toggles the selected check button
@@ -1389,9 +1445,9 @@ class ArduinoGUI(GUI):
         self.entries = []
         for i in range(self.num_entries):
             self.entries.append(copy.deepcopy([copy.deepcopy([])]*self.columns))
-        Tk.Label(scroll_frame.middle_frame, text="Time On(s)").grid(row=0, column=1)
-        Tk.Label(scroll_frame.middle_frame, text="Time Off(s)").grid(row=0, column=2)
-        Tk.Label(scroll_frame.middle_frame, text="Freq(Hz)").grid(row=0, column=3)
+        Tk.Label(scroll_frame.middle_frame, text='Time On(s)').grid(row=0, column=1)
+        Tk.Label(scroll_frame.middle_frame, text='Time Off(s)').grid(row=0, column=2)
+        Tk.Label(scroll_frame.middle_frame, text='Freq(Hz)').grid(row=0, column=3)
         for row in range(self.num_entries):
             Tk.Label(scroll_frame.middle_frame,
                      text='{:0>2}'.format(row+1)).grid(row=row+1, column=0)
@@ -1402,11 +1458,14 @@ class ArduinoGUI(GUI):
                     row=row+1, column=entry+1)
                 self.entries[row][entry].config(state=Tk.DISABLED)
         # Confirm button
-        Tk.Button(scroll_frame.bottom_frame, text='CONFIRM').pack(side=Tk.TOP)
+        Tk.Button(scroll_frame.bottom_frame,
+                  text='CONFIRM',
+                  command=lambda:
+                  self.confirm('tone')).pack(side=Tk.TOP)
         scroll_frame.finalize()
         # Finish setup
         self.center()
-        self.root.geometry("257x272")
+        self.root.geometry('257x272')
 
     def output_setup(self):
         """
@@ -1452,12 +1511,15 @@ class ArduinoGUI(GUI):
                                                                            column=1+pin)
             for row in range(self.num_entries):
                 Tk.Label(scroll_frame.middle_frame,
-                         text="{:0>2}".format(row+1)).grid(row=row+1, column=0)
+                         text='{:0>2}'.format(row+1)).grid(row=row+1, column=0)
                 self.entries[pin][row] = Tk.Entry(scroll_frame.middle_frame, width=18)
                 self.entries[pin][row].grid(row=row+1, column=1+pin)
                 self.entries[pin][row].config(state=Tk.DISABLED)
         # Confirm Button
-        Tk.Button(scroll_frame.bottom_frame, text='CONFIRM').pack(side=Tk.TOP)
+        Tk.Button(scroll_frame.bottom_frame,
+                  text='CONFIRM',
+                  command=lambda:
+                  self.confirm('output')).pack(side=Tk.TOP)
         # Finish GUI Setup
         scroll_frame.finalize()
         self.root.geometry('980x280')
@@ -1468,28 +1530,28 @@ class ArduinoGUI(GUI):
         PWM Config GUI Setup
         :return:
         """
-        self.root.title("PWM Configuration")
-        num_pins, self.numEntries = 5, 15
+        self.root.title('PWM Configuration')
+        num_pins, self.num_entries = 5, 15
         scroll_frame = ScrollFrame(self.root, num_pins,
-                                   self.numEntries+1, bottom_padding=24)
+                                   self.num_entries+1, bottom_padding=24)
         info_frame = Tk.LabelFrame(scroll_frame.top_frame,
-                                   text="Enable Arduino Pins")
+                                   text='Enable Arduino Pins')
         info_frame.grid(row=0, column=0, sticky=self.ALL)
-        Tk.Label(info_frame, text=" "*6).pack(side=Tk.RIGHT)
-        Tk.Label(info_frame, text="e.g. 0,180,200,20,90   (Per Entry Box)",
+        Tk.Label(info_frame, text=' '*6).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame, text='e.g. 0,180,200,20,90   (Per Entry Box)',
                  relief=Tk.RAISED).pack(side=Tk.RIGHT)
-        Tk.Label(info_frame, text=" "*5).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame, text=' '*5).pack(side=Tk.RIGHT)
         Tk.Label(info_frame,
-                 text="Enable pins, then input instructions "
-                      "line by line with comma separation.",
+                 text='Enable pins, then input instructions '
+                      'line by line with comma separation.',
                  relief=Tk.RAISED).pack(side=Tk.RIGHT)
         Tk.Label(info_frame,
-                 text=" "*10).pack(side=Tk.RIGHT)
+                 text=' '*10).pack(side=Tk.RIGHT)
         # Variables
         self.entries = []
         for pin in range(num_pins):
             self.entries.append([])
-            for entry in range(self.numEntries):
+            for entry in range(self.num_entries):
                 self.entries[pin].append([])
         button = copy.deepcopy([[]]*num_pins)
         self.pwm_var = self.create_tk_vars('Int', num_pins)
@@ -1497,32 +1559,35 @@ class ArduinoGUI(GUI):
         for pin in range(num_pins):
             button[pin] = Tk.Checkbutton(
                 info_frame,
-                text="Pin {:0>2}".format(self.pwm_ids[pin]),
+                text='Pin {:0>2}'.format(self.pwm_ids[pin]),
                 variable=self.pwm_var[pin],
                 onvalue=1, offvalue=0,
                 command=lambda tags=self.pwm_ids[pin]: self.button_toggle(tags))
             button[pin].pack(side=Tk.LEFT)
             Tk.Label(scroll_frame.middle_frame,
-                     text="Pin {:0>2}\n"
-                          "On(s), "
-                          "Off(s), "
-                          "Freq(Hz),\n"
-                          "Duty Cycle (%), "
-                          "Phase Shift (Deg)".format(self.pwm_ids[pin])).grid(row=0,
+                     text='Pin {:0>2}\n'
+                          'On(s), '
+                          'Off(s), '
+                          'Freq(Hz),\n'
+                          'Duty Cycle (%), '
+                          'Phase Shift (Deg)'.format(self.pwm_ids[pin])).grid(row=0,
                                                                               column=1+pin)
-            for row in range(self.numEntries):
+            for row in range(self.num_entries):
                 Tk.Label(scroll_frame.middle_frame,
                          text='{:0>2}'.format(row+1)).grid(row=row+1, column=0)
                 self.entries[pin][row] = Tk.Entry(
                     scroll_frame.middle_frame, width=25)
                 self.entries[pin][row].grid(
                     row=row+1, column=1+pin)
-                self.entries[pin][row].config(state="disabled")
+                self.entries[pin][row].config(state='disabled')
         # Confirm Button
-        Tk.Button(scroll_frame.bottom_frame, text="Confirm").pack(side=Tk.TOP)
+        Tk.Button(scroll_frame.bottom_frame,
+                  text='CONFIRM',
+                  command=lambda:
+                  self.confirm('pwm')).pack(side=Tk.TOP)
         # Finish Tone Setup
         scroll_frame.finalize()
-        self.root.geometry("1100x280")
+        self.root.geometry('1100x280')
         self.center()
 
 
@@ -1553,7 +1618,7 @@ class ProgressBar(threading.Thread):
             self.time_diff = (now-self.start_prog).seconds+float((now-self.start_prog).microseconds)/1000000
             if self.time_diff/self.num_time >= 0.005:
                 self.canvas.itemconfig(self.time_gfx,
-                                       text="{}".format(min_from_sec(self.time_diff, True)))
+                                       text='{}'.format(min_from_sec(self.time_diff, True)))
                 self.num_time += 1
             if self.time_diff/self.num_prog >= self.segment_size:
                 self.canvas.move(self.bar, 1, 0)
@@ -1618,7 +1683,7 @@ class Directories(object):
         """
         Load last used settings
         """
-        with open(self.user_home + "/frSettings.frcl", "rb") as settings_file:
+        with open(self.user_home + '/frSettings.frcl', 'rb') as settings_file:
             self.settings = pickle.load(settings_file)
             self.settings.check_dirs()
 
@@ -1626,7 +1691,7 @@ class Directories(object):
         """
         Save settings for future use.
         """
-        with open(dirs.user_home + "/frSettings.frcl", "wb") as settings_file:
+        with open(dirs.user_home + '/frSettings.frcl', 'wb') as settings_file:
             pickle.dump(self.settings, settings_file)
 
 
@@ -1642,15 +1707,15 @@ class MainSettings(object):
     def __init__(self):
         self.ser_port = ''
         self.save_dir = ''
-        self.fp_last_used = {"ch_num": [],
-                             "main_freq": 0,
-                             "isos_freq": 0}
-        self.lj_last_used = {"ch_num": [], "scan_freq": 0}
+        self.fp_last_used = {'ch_num': [],
+                             'main_freq': 0,
+                             'isos_freq': 0}
+        self.lj_last_used = {'ch_num': [], 'scan_freq': 0}
         self.ard_last_used = {
-            "packet": [],
-            "tone_pack": [],
-            "out_pack": [],
-            "pwm_pack": []}
+            'packet': [],
+            'tone_pack': [],
+            'out_pack': [],
+            'pwm_pack': []}
         self.lj_presets = {}
         self.ard_presets = {}
 
@@ -1663,26 +1728,26 @@ class MainSettings(object):
         else:
             self.ser_port = '/dev/tty.usbmodem1421'
         self.save_dir = ''
-        self.fp_last_used = {"ch_num": [0, 1, 2],
-                             "main_freq": 211,
-                             "isos_freq": 531}
-        self.lj_last_used = {"ch_num": [], "scan_freq": 0}
+        self.fp_last_used = {'ch_num': [0, 1, 2],
+                             'main_freq': 211,
+                             'isos_freq': 531}
+        self.lj_last_used = {'ch_num': [], 'scan_freq': 0}
         self.ard_last_used = {
-            "packet": ['<BBLHHH', 255, 255, 0, 0, 0, 0],
-            "tone_pack": [],
-            "out_pack": [],
-            "pwm_pack": []
+            'packet': ['<BBLHHH', 255, 255, 0, 0, 0, 0],
+            'tone_pack': [],
+            'out_pack': [],
+            'pwm_pack': []
         }
         # All Saved Presets
-        self.lj_presets = {"example": {"ch_num": [0, 1, 2, 10, 11],
-                                       "scan_freq": 6250}}
-        self.ard_presets = {"example":
-                            {"packet": ['<BBLHHH', 255, 255,
+        self.lj_presets = {'example': {'ch_num': [0, 1, 2, 10, 11],
+                                       'scan_freq': 6250}}
+        self.ard_presets = {'example':
+                            {'packet': ['<BBLHHH', 255, 255,
                                         180000, 1, 2, 0],
-                                "tone_pack": [['<LLH', 120000, 150000, 2800]],
-                                "out_pack": [['<LB', 148000, 4],
+                                'tone_pack': [['<LLH', 120000, 150000, 2800]],
+                                'out_pack': [['<LB', 148000, 4],
                                              ['<LB', 150000, 4]],
-                                "pwm_pack": []}
+                                'pwm_pack': []}
                             }
 
     def check_dirs(self):
@@ -1703,10 +1768,10 @@ class MainSettings(object):
             List
         """
         return [
-            self.ard_last_used["packet"],
-            self.ard_last_used["tone_pack"],
-            self.ard_last_used["out_pack"],
-            self.ard_last_used["pwm_pack"]
+            self.ard_last_used['packet'],
+            self.ard_last_used['tone_pack'],
+            self.ard_last_used['out_pack'],
+            self.ard_last_used['pwm_pack']
         ]
 
     def quick_lj(self):
