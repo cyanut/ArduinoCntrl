@@ -3,6 +3,7 @@
   <component name="ChangeListManager">
     <list default="true" id="69ed7119-d717-4246-9363-2ad2b6d93e1e" name="Default" comment="">
       <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/workspace.xml" afterPath="$PROJECT_DIR$/.idea/workspace.xml" />
+      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/temp" afterPath="$PROJECT_DIR$/temp" />
     </list>
     <ignored path="ArduinoCntrl.iws" />
     <ignored path=".idea/workspace.xml" />
@@ -85,7 +86,7 @@
                 <state relative-caret-position="360">
                   <caret line="24" column="33" selection-start-line="24" selection-start-column="33" selection-end-line="24" selection-end-column="33" />
                   <folding>
-                    <marker date="1467637920000" expanded="true" signature="2938:2966" ph="Select an op... " />
+                    <marker date="1467638751000" expanded="true" signature="2939:2967" ph="Select an op... " />
                   </folding>
                 </state>
               </provider>
@@ -98,10 +99,10 @@
           <file leaf-file-name="temp" pinned="false" current-in-tab="true">
             <entry file="file://$PROJECT_DIR$/temp">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="10200">
-                  <caret line="680" column="20" selection-start-line="680" selection-start-column="20" selection-end-line="680" selection-end-column="20" />
+                <state relative-caret-position="315">
+                  <caret line="21" column="26" selection-start-line="21" selection-start-column="26" selection-end-line="21" selection-end-column="26" />
                   <folding>
-                    <marker date="1467637920000" expanded="true" signature="2938:2966" ph="Select an op... " />
+                    <marker date="1467638751000" expanded="true" signature="2939:2967" ph="Select an op... " />
                   </folding>
                 </state>
               </provider>
@@ -117,8 +118,8 @@
   <component name="IdeDocumentHistory">
     <option name="CHANGED_PATHS">
       <list>
-        <option value="$PROJECT_DIR$/temp" />
         <option value="$PROJECT_DIR$/guitest.py" />
+        <option value="$PROJECT_DIR$/temp" />
       </list>
     </option>
   </component>
@@ -483,7 +484,14 @@
       <option name="project" value="LOCAL" />
       <updated>1467638165542</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="k">
+      <created>1467638744171</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1467638744171</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="ToolWindowManager">
@@ -632,10 +640,10 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/temp">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="10200">
-          <caret line="680" column="20" selection-start-line="680" selection-start-column="20" selection-end-line="680" selection-end-column="20" />
+        <state relative-caret-position="315">
+          <caret line="21" column="26" selection-start-line="21" selection-start-column="26" selection-end-line="21" selection-end-column="26" />
           <folding>
-            <marker date="1467637920000" expanded="true" signature="2938:2966" ph="Select an op... " />
+            <marker date="1467638751000" expanded="true" signature="2939:2967" ph="Select an op... " />
           </folding>
         </state>
       </provider>

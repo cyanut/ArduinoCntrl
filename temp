@@ -19,7 +19,7 @@ def exit_after(s):
 
 ####################
 #ARDUINO COMMUNICATIONS
-def sendToArduino(sendStr):
+def sendToArduino(sendStr ):
 	ser.write(sendStr)
 def recvFromArduino():
 	global startMarker, endMarker
