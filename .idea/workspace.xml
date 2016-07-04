@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="69ed7119-d717-4246-9363-2ad2b6d93e1e" name="Default" comment="">
+    <list default="true" id="69ed7119-d717-4246-9363-2ad2b6d93e1e" name="Default" comment="fixed bugs for windows">
+      <change type="NEW" beforePath="" afterPath="$PROJECT_DIR$/test.py" />
+      <change type="DELETED" beforePath="$PROJECT_DIR$/temp" afterPath="" />
+      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/dictionaries/minimicroscope.xml" afterPath="$PROJECT_DIR$/.idea/dictionaries/minimicroscope.xml" />
       <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/workspace.xml" afterPath="$PROJECT_DIR$/.idea/workspace.xml" />
-      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/temp" afterPath="$PROJECT_DIR$/temp" />
+      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/guitest.py" afterPath="$PROJECT_DIR$/guitest.py" />
     </list>
     <ignored path="ArduinoCntrl.iws" />
     <ignored path=".idea/workspace.xml" />
@@ -17,7 +20,8 @@
   </component>
   <component name="ChangesViewManager" flattened_view="true" show_ignored="false" />
   <component name="CoverageDataManager">
-    <SUITE FILE_PATH="coverage/ArduinoCntrl$guitest.coverage" NAME="guitest Coverage Results" MODIFIED="1467618768816" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/ArduinoCntrl$test.coverage" NAME="test Coverage Results" MODIFIED="1467649744267" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/ArduinoCntrl$guitest.coverage" NAME="guitest Coverage Results" MODIFIED="1467665453271" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
   <component name="CreatePatchCommitExecutor">
     <option name="PATCH_PATH" value="" />
@@ -27,65 +31,60 @@
     <favorites_list name="ArduinoCntrl" />
   </component>
   <component name="FileEditorManager">
-    <splitter split-orientation="horizontal" split-proportion="0.6176013">
+    <splitter split-orientation="horizontal" split-proportion="0.49270833">
       <split-first>
         <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
-          <file leaf-file-name="guitest.py" pinned="false" current-in-tab="false">
+          <file leaf-file-name="guitest.py" pinned="false" current-in-tab="true">
             <entry file="file://$PROJECT_DIR$/guitest.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="105">
-                  <caret line="7" column="15" selection-start-line="7" selection-start-column="15" selection-end-line="7" selection-end-column="15" />
+                <state relative-caret-position="216">
+                  <caret line="1427" column="67" selection-start-line="1427" selection-start-column="67" selection-end-line="1427" selection-end-column="67" />
                   <folding>
-                    <element signature="e#618#1206#0" expanded="false" />
-                    <element signature="e#1237#2139#0" expanded="false" />
-                    <element signature="e#2179#2707#0" expanded="false" />
-                    <element signature="e#2749#2936#0" expanded="false" />
-                    <element signature="e#2984#3143#0" expanded="false" />
-                    <element signature="e#3175#3865#0" expanded="false" />
-                    <element signature="e#4008#43169#0" expanded="false" />
-                    <element signature="e#15700#16548#0" expanded="false" />
-                    <element signature="e#16591#16954#0" expanded="false" />
-                    <element signature="e#17002#17123#0" expanded="false" />
-                    <element signature="e#17160#21786#0" expanded="false" />
-                    <element signature="e#21852#33256#0" expanded="false" />
-                    <element signature="e#33316#35911#0" expanded="false" />
-                    <element signature="e#35950#36606#0" expanded="false" />
-                    <element signature="e#36641#37301#0" expanded="false" />
-                    <element signature="e#37336#37800#0" expanded="false" />
-                    <element signature="e#37840#38072#0" expanded="false" />
-                    <element signature="e#38141#40324#0" expanded="false" />
-                    <element signature="e#40361#41562#0" expanded="false" />
-                    <element signature="e#41597#41987#0" expanded="false" />
-                    <element signature="e#42034#43169#0" expanded="false" />
-                    <element signature="e#43203#44858#0" expanded="false" />
-                    <element signature="e#44884#46513#0" expanded="false" />
-                    <element signature="e#46546#51679#0" expanded="false" />
-                    <element signature="e#51709#60725#0" expanded="false" />
-                    <element signature="e#55311#55485#0" expanded="false" />
-                    <element signature="e#55524#56563#0" expanded="false" />
-                    <element signature="e#56600#58289#0" expanded="false" />
-                    <element signature="e#58319#58515#0" expanded="false" />
-                    <element signature="e#58561#60055#0" expanded="false" />
-                    <element signature="e#60098#60722#0" expanded="false" />
-                    <element signature="e#61711#62943#0" expanded="false" />
-                    <element signature="e#62979#64883#0" expanded="false" />
-                    <element signature="e#64921#67681#0" expanded="false" />
-                    <element signature="e#67716#70611#0" expanded="false" />
-                    <element signature="e#70655#73053#0" expanded="false" />
-                    <element signature="e#73164#74395#0" expanded="false" />
-                    <element signature="e#74509#77659#0" expanded="false" />
-                  </folding>
-                </state>
-              </provider>
-            </entry>
-          </file>
-          <file leaf-file-name="temp" pinned="false" current-in-tab="true">
-            <entry file="file://$PROJECT_DIR$/temp">
-              <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="180">
-                  <caret line="12" column="39" selection-start-line="12" selection-start-column="39" selection-end-line="12" selection-end-column="39" />
-                  <folding>
-                    <marker date="1467643155000" expanded="true" signature="18811:18839" ph="Select an op... " />
+                    <element signature="e#0#56#1" expanded="false" />
+                    <element signature="e#57#70#0" expanded="true" />
+                    <element signature="e#3266#3956#0" expanded="false" />
+                    <element signature="e#4228#4390#0" expanded="false" />
+                    <element signature="e#22426#33830#0" expanded="false" />
+                    <element signature="e#45710#47661#0" expanded="false" />
+                    <element signature="e#45814#46008#0" expanded="false" />
+                    <element signature="e#46040#46621#0" expanded="false" />
+                    <element signature="e#66882#67047#0" expanded="false" />
+                    <element signature="e#67327#67644#0" expanded="false" />
+                    <element signature="e#67884#68034#0" expanded="false" />
+                    <element signature="e#68273#68507#0" expanded="false" />
+                    <element signature="e#68725#69044#0" expanded="false" />
+                    <element signature="e#69190#69343#0" expanded="false" />
+                    <element signature="e#70940#72042#0" expanded="false" />
+                    <element signature="e#72078#74058#0" expanded="false" />
+                    <element signature="e#77145#80368#0" expanded="false" />
+                    <element signature="e#80412#82810#0" expanded="false" />
+                    <element signature="e#85173#88323#0" expanded="false" />
+                    <marker date="1467666743770" expanded="false" signature="704:1297" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="1323:2230" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="2265:2798" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="2835:3027" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="3070:3234" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="3979:4196" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="17156:17528" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="17567:17697" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="17725:22360" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="33881:36485" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="36515:37180" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="37206:37877" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="37903:38376" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="38407:38648" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="38708:41000" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="41028:42284" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="42310:42709" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="42733:43995" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="44024:45684" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="53032:62545" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="56630:56813" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="56843:57979" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="58007:59916" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="59937:60142" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="60179:61878" ph="..." />
+                    <marker date="1467666743770" expanded="false" signature="61912:62545" ph="..." />
                   </folding>
                 </state>
               </provider>
@@ -95,14 +94,24 @@
       </split-first>
       <split-second>
         <leaf>
-          <file leaf-file-name="temp" pinned="false" current-in-tab="true">
-            <entry file="file://$PROJECT_DIR$/temp">
+          <file leaf-file-name="temp.py" pinned="false" current-in-tab="true">
+            <entry file="file://$PROJECT_DIR$/temp.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="225">
-                  <caret line="466" column="15" selection-start-line="466" selection-start-column="15" selection-end-line="466" selection-end-column="15" />
+                <state relative-caret-position="-209">
+                  <caret line="71" column="52" selection-start-line="71" selection-start-column="41" selection-end-line="71" selection-end-column="52" />
                   <folding>
-                    <marker date="1467643155000" expanded="true" signature="18811:18839" ph="Select an op... " />
+                    <element signature="e#7680#11701#0" expanded="false" />
                   </folding>
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file leaf-file-name="test.py" pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/test.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="119">
+                  <caret line="16" column="46" selection-start-line="16" selection-start-column="46" selection-end-line="16" selection-end-column="46" />
+                  <folding />
                 </state>
               </provider>
             </entry>
@@ -111,14 +120,24 @@
       </split-second>
     </splitter>
   </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
   <component name="Git.Settings">
+    <option name="UPDATE_TYPE" value="MERGE" />
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="IdeDocumentHistory">
     <option name="CHANGED_PATHS">
       <list>
-        <option value="$PROJECT_DIR$/guitest.py" />
         <option value="$PROJECT_DIR$/temp" />
+        <option value="$PROJECT_DIR$/test.py" />
+        <option value="$PROJECT_DIR$/temp.py" />
+        <option value="$PROJECT_DIR$/guitest.py" />
       </list>
     </option>
   </component>
@@ -129,10 +148,10 @@
     <sorting>DEFINITION_ORDER</sorting>
   </component>
   <component name="ProjectFrameBounds">
-    <option name="x" value="-4" />
-    <option name="y" value="23" />
-    <option name="width" value="1284" />
-    <option name="height" value="773" />
+    <option name="x" value="-8" />
+    <option name="y" value="-8" />
+    <option name="width" value="1936" />
+    <option name="height" value="1056" />
   </component>
   <component name="ProjectInspectionProfilesVisibleTreeState">
     <entry key="Project Default">
@@ -216,8 +235,119 @@
   <component name="PropertiesComponent">
     <property name="last_opened_file_path" value="$PROJECT_DIR$/guitest.py" />
     <property name="WebServerToolWindowFactoryState" value="false" />
-    <property name="settings.editor.selected.configurable" value="reference.settingsdialog.IDE.editor.colors.Console Colors" />
+    <property name="settings.editor.selected.configurable" value="editor.preferences.appearance" />
     <property name="settings.editor.splitter.proportion" value="0.2" />
+  </component>
+  <component name="RestoreUpdateTree" date="Moments ago" ActionInfo="_Update">
+    <UpdatedFiles>
+      <FILE-GROUP>
+        <option name="myUpdateName" value="Updated from server" />
+        <option name="myStatusName" value="Changed on server" />
+        <option name="mySupportsDeletion" value="false" />
+        <option name="myCanBeAbsent" value="false" />
+        <option name="myId" value="CHANGED_ON_SERVER" />
+        <FILE-GROUP>
+          <option name="myUpdateName" value="Updated" />
+          <option name="myStatusName" value="Changed" />
+          <option name="mySupportsDeletion" value="false" />
+          <option name="myCanBeAbsent" value="false" />
+          <option name="myId" value="UPDATED" />
+          <PATH vcs="Git" revision="">$PROJECT_DIR$/.idea/workspace.xml</PATH>
+        </FILE-GROUP>
+        <FILE-GROUP>
+          <option name="myUpdateName" value="Created" />
+          <option name="myStatusName" value="Created" />
+          <option name="mySupportsDeletion" value="false" />
+          <option name="myCanBeAbsent" value="false" />
+          <option name="myId" value="CREATED" />
+          <PATH vcs="Git" revision="">$PROJECT_DIR$/temp</PATH>
+        </FILE-GROUP>
+        <FILE-GROUP>
+          <option name="myUpdateName" value="Deleted" />
+          <option name="myStatusName" value="Deleted" />
+          <option name="mySupportsDeletion" value="false" />
+          <option name="myCanBeAbsent" value="true" />
+          <option name="myId" value="REMOVED_FROM_REPOSITORY" />
+        </FILE-GROUP>
+        <FILE-GROUP>
+          <option name="myUpdateName" value="Restored" />
+          <option name="myStatusName" value="Will be restored" />
+          <option name="mySupportsDeletion" value="false" />
+          <option name="myCanBeAbsent" value="false" />
+          <option name="myId" value="RESTORED" />
+        </FILE-GROUP>
+      </FILE-GROUP>
+      <FILE-GROUP>
+        <option name="myUpdateName" value="Modified" />
+        <option name="myStatusName" value="Modified" />
+        <option name="mySupportsDeletion" value="false" />
+        <option name="myCanBeAbsent" value="false" />
+        <option name="myId" value="MODIFIED" />
+      </FILE-GROUP>
+      <FILE-GROUP>
+        <option name="myUpdateName" value="Skipped" />
+        <option name="myStatusName" value="Skipped" />
+        <option name="mySupportsDeletion" value="false" />
+        <option name="myCanBeAbsent" value="false" />
+        <option name="myId" value="SKIPPED" />
+      </FILE-GROUP>
+      <FILE-GROUP>
+        <option name="myUpdateName" value="Merged with conflicts" />
+        <option name="myStatusName" value="Will be merged with conflicts" />
+        <option name="mySupportsDeletion" value="false" />
+        <option name="myCanBeAbsent" value="false" />
+        <option name="myId" value="MERGED_WITH_CONFLICTS" />
+      </FILE-GROUP>
+      <FILE-GROUP>
+        <option name="myUpdateName" value="Merged with tree conflicts" />
+        <option name="myStatusName" value="Merged with tree conflicts" />
+        <option name="mySupportsDeletion" value="false" />
+        <option name="myCanBeAbsent" value="false" />
+        <option name="myId" value="MERGED_WITH_TREE_CONFLICT" />
+      </FILE-GROUP>
+      <FILE-GROUP>
+        <option name="myUpdateName" value="Merged with property conflicts" />
+        <option name="myStatusName" value="Will be merged with property conflicts" />
+        <option name="mySupportsDeletion" value="false" />
+        <option name="myCanBeAbsent" value="false" />
+        <option name="myId" value="MERGED_WITH_PROPERTY_CONFLICT" />
+      </FILE-GROUP>
+      <FILE-GROUP>
+        <option name="myUpdateName" value="Merged" />
+        <option name="myStatusName" value="Will be merged" />
+        <option name="mySupportsDeletion" value="false" />
+        <option name="myCanBeAbsent" value="false" />
+        <option name="myId" value="MERGED" />
+      </FILE-GROUP>
+      <FILE-GROUP>
+        <option name="myUpdateName" value="Not in repository" />
+        <option name="myStatusName" value="Not in repository" />
+        <option name="mySupportsDeletion" value="true" />
+        <option name="myCanBeAbsent" value="false" />
+        <option name="myId" value="UNKNOWN" />
+      </FILE-GROUP>
+      <FILE-GROUP>
+        <option name="myUpdateName" value="Locally added" />
+        <option name="myStatusName" value="Locally added" />
+        <option name="mySupportsDeletion" value="false" />
+        <option name="myCanBeAbsent" value="false" />
+        <option name="myId" value="LOCALLY_ADDED" />
+      </FILE-GROUP>
+      <FILE-GROUP>
+        <option name="myUpdateName" value="Locally removed" />
+        <option name="myStatusName" value="Locally removed" />
+        <option name="mySupportsDeletion" value="false" />
+        <option name="myCanBeAbsent" value="false" />
+        <option name="myId" value="LOCALLY_REMOVED" />
+      </FILE-GROUP>
+      <FILE-GROUP>
+        <option name="myUpdateName" value="Switched" />
+        <option name="myStatusName" value="Switched" />
+        <option name="mySupportsDeletion" value="false" />
+        <option name="myCanBeAbsent" value="false" />
+        <option name="myId" value="SWITCHED" />
+      </FILE-GROUP>
+    </UpdatedFiles>
   </component>
   <component name="RunManager" selected="Python.guitest">
     <configuration default="false" name="guitest" type="PythonConfigurationType" factoryName="Python" temporary="true">
@@ -234,6 +364,24 @@
       <module name="ArduinoCntrl" />
       <EXTENSION ID="PythonCoverageRunConfigurationExtension" enabled="false" sample_coverage="true" runner="coverage.py" />
       <option name="SCRIPT_NAME" value="$PROJECT_DIR$/guitest.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <method />
+    </configuration>
+    <configuration default="false" name="test" type="PythonConfigurationType" factoryName="Python" temporary="true">
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <module name="ArduinoCntrl" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" enabled="false" sample_coverage="true" runner="coverage.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/test.py" />
       <option name="PARAMETERS" value="" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <method />
@@ -446,12 +594,14 @@
       <option name="USE_KEYWORD" value="false" />
       <method />
     </configuration>
-    <list size="1">
+    <list size="2">
       <item index="0" class="java.lang.String" itemvalue="Python.guitest" />
+      <item index="1" class="java.lang.String" itemvalue="Python.test" />
     </list>
     <recent_temporary>
-      <list size="1">
+      <list size="2">
         <item index="0" class="java.lang.String" itemvalue="Python.guitest" />
+        <item index="1" class="java.lang.String" itemvalue="Python.test" />
       </list>
     </recent_temporary>
   </component>
@@ -490,31 +640,31 @@
       <option name="project" value="LOCAL" />
       <updated>1467638744171</updated>
     </task>
-    <task id="LOCAL-00004" summary="k">
-      <created>1467638756063</created>
+    <task id="LOCAL-00004" summary="fixed bugs for windows">
+      <created>1467642954435</created>
       <option name="number" value="00004" />
       <option name="presentableId" value="LOCAL-00004" />
       <option name="project" value="LOCAL" />
-      <updated>1467638756063</updated>
+      <updated>1467642954435</updated>
     </task>
     <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="ToolWindowManager">
-    <frame x="-4" y="23" width="1284" height="773" extended-state="6" />
+    <frame x="-8" y="-8" width="1936" height="1056" extended-state="6" />
     <editor active="true" />
     <layout>
       <window_info id="Project" active="false" anchor="left" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.24960753" sideWeight="0.5" order="0" side_tool="false" content_ui="combo" />
       <window_info id="TODO" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="6" side_tool="false" content_ui="tabs" />
-      <window_info id="Event Log" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.39945653" sideWeight="0.50208336" order="7" side_tool="true" content_ui="tabs" />
+      <window_info id="Event Log" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.39852008" sideWeight="0.50416666" order="7" side_tool="true" content_ui="tabs" />
       <window_info id="Database" active="false" anchor="right" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="3" side_tool="false" content_ui="tabs" />
       <window_info id="Python Console" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
-      <window_info id="Version Control" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
-      <window_info id="Run" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.32971016" sideWeight="0.5" order="2" side_tool="false" content_ui="tabs" />
+      <window_info id="Version Control" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.32980973" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
+      <window_info id="Run" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="true" show_stripe_button="true" weight="0.14059196" sideWeight="0.5" order="2" side_tool="false" content_ui="tabs" />
       <window_info id="Structure" active="false" anchor="left" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.25" sideWeight="0.5" order="1" side_tool="false" content_ui="tabs" />
       <window_info id="Terminal" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
       <window_info id="Favorites" active="false" anchor="left" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="2" side_tool="true" content_ui="tabs" />
-      <window_info id="Debug" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.39945653" sideWeight="0.49791667" order="3" side_tool="false" content_ui="tabs" />
+      <window_info id="Debug" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.39852008" sideWeight="0.49583334" order="3" side_tool="false" content_ui="tabs" />
       <window_info id="Cvs" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.25" sideWeight="0.5" order="4" side_tool="false" content_ui="tabs" />
       <window_info id="Message" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="0" side_tool="false" content_ui="tabs" />
       <window_info id="Commander" active="false" anchor="right" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.4" sideWeight="0.5" order="0" side_tool="false" content_ui="tabs" />
@@ -524,6 +674,14 @@
       <window_info id="Ant Build" active="false" anchor="right" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.25" sideWeight="0.5" order="1" side_tool="false" content_ui="tabs" />
     </layout>
   </component>
+  <component name="Vcs.Log.UiProperties">
+    <option name="RECENTLY_FILTERED_USER_GROUPS">
+      <collection />
+    </option>
+    <option name="RECENTLY_FILTERED_BRANCH_GROUPS">
+      <collection />
+    </option>
+  </component>
   <component name="VcsContentAnnotationSettings">
     <option name="myLimit" value="2678400000" />
   </component>
@@ -531,123 +689,271 @@
     <option name="CHECK_NEW_TODO" value="false" />
     <MESSAGE value="cleaned up code and formatted to PEP8" />
     <MESSAGE value="k" />
-    <option name="LAST_COMMIT_MESSAGE" value="k" />
+    <MESSAGE value="fixed bugs for windows" />
+    <option name="LAST_COMMIT_MESSAGE" value="fixed bugs for windows" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
-      <option name="time" value="1" />
+      <option name="time" value="11" />
     </breakpoint-manager>
     <watches-manager />
   </component>
   <component name="editorHistoryManager">
     <entry file="file://$PROJECT_DIR$/guitest.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="0">
-          <caret line="0" column="0" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
+        <state relative-caret-position="1768">
+          <caret line="207" column="26" selection-start-line="207" selection-start-column="26" selection-end-line="207" selection-end-column="26" />
           <folding>
-            <element signature="e#618#1206#0" expanded="false" />
-            <element signature="e#1237#2139#0" expanded="false" />
-            <element signature="e#2179#2707#0" expanded="false" />
-            <element signature="e#2749#2936#0" expanded="false" />
-            <element signature="e#2984#3143#0" expanded="false" />
-            <element signature="e#3175#3865#0" expanded="false" />
-            <element signature="e#4008#43169#0" expanded="false" />
-            <element signature="e#15700#16548#0" expanded="false" />
-            <element signature="e#16591#16954#0" expanded="false" />
-            <element signature="e#17002#17123#0" expanded="false" />
-            <element signature="e#17160#21786#0" expanded="false" />
-            <element signature="e#21852#33256#0" expanded="false" />
-            <element signature="e#33316#35911#0" expanded="false" />
-            <element signature="e#35950#36606#0" expanded="false" />
-            <element signature="e#36641#37301#0" expanded="false" />
-            <element signature="e#37336#37800#0" expanded="false" />
-            <element signature="e#37840#38072#0" expanded="false" />
-            <element signature="e#38141#40324#0" expanded="false" />
-            <element signature="e#40361#41562#0" expanded="false" />
-            <element signature="e#41597#41987#0" expanded="false" />
-            <element signature="e#42034#43169#0" expanded="false" />
-            <element signature="e#43203#44858#0" expanded="false" />
-            <element signature="e#44884#46513#0" expanded="false" />
-            <element signature="e#46546#51679#0" expanded="false" />
-            <element signature="e#51709#60725#0" expanded="false" />
-            <element signature="e#55311#55485#0" expanded="false" />
-            <element signature="e#55524#56563#0" expanded="false" />
-            <element signature="e#56600#58289#0" expanded="false" />
-            <element signature="e#58319#58515#0" expanded="false" />
-            <element signature="e#58561#60055#0" expanded="false" />
-            <element signature="e#60098#60722#0" expanded="false" />
-            <element signature="e#61711#62943#0" expanded="false" />
-            <element signature="e#62979#64883#0" expanded="false" />
-            <element signature="e#64921#67681#0" expanded="false" />
-            <element signature="e#67716#70611#0" expanded="false" />
-            <element signature="e#70655#73053#0" expanded="false" />
-            <element signature="e#73164#74395#0" expanded="false" />
-            <element signature="e#74509#77659#0" expanded="false" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file:///Library/Frameworks/Python.framework/Versions/2.7/lib/python2.7/lib-tk/Tkinter.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="0">
-          <caret line="0" column="0" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
-          <folding />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/guitest.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="105">
-          <caret line="7" column="15" selection-start-line="7" selection-start-column="15" selection-end-line="7" selection-end-column="15" />
-          <folding>
-            <element signature="e#618#1206#0" expanded="false" />
-            <element signature="e#1237#2139#0" expanded="false" />
-            <element signature="e#2179#2707#0" expanded="false" />
-            <element signature="e#2749#2936#0" expanded="false" />
-            <element signature="e#2984#3143#0" expanded="false" />
-            <element signature="e#3175#3865#0" expanded="false" />
-            <element signature="e#4008#43169#0" expanded="false" />
-            <element signature="e#15700#16548#0" expanded="false" />
-            <element signature="e#16591#16954#0" expanded="false" />
-            <element signature="e#17002#17123#0" expanded="false" />
-            <element signature="e#17160#21786#0" expanded="false" />
-            <element signature="e#21852#33256#0" expanded="false" />
-            <element signature="e#33316#35911#0" expanded="false" />
-            <element signature="e#35950#36606#0" expanded="false" />
-            <element signature="e#36641#37301#0" expanded="false" />
-            <element signature="e#37336#37800#0" expanded="false" />
-            <element signature="e#37840#38072#0" expanded="false" />
-            <element signature="e#38141#40324#0" expanded="false" />
-            <element signature="e#40361#41562#0" expanded="false" />
-            <element signature="e#41597#41987#0" expanded="false" />
-            <element signature="e#42034#43169#0" expanded="false" />
-            <element signature="e#43203#44858#0" expanded="false" />
-            <element signature="e#44884#46513#0" expanded="false" />
-            <element signature="e#46546#51679#0" expanded="false" />
-            <element signature="e#51709#60725#0" expanded="false" />
-            <element signature="e#55311#55485#0" expanded="false" />
-            <element signature="e#55524#56563#0" expanded="false" />
-            <element signature="e#56600#58289#0" expanded="false" />
-            <element signature="e#58319#58515#0" expanded="false" />
-            <element signature="e#58561#60055#0" expanded="false" />
-            <element signature="e#60098#60722#0" expanded="false" />
-            <element signature="e#61711#62943#0" expanded="false" />
-            <element signature="e#62979#64883#0" expanded="false" />
-            <element signature="e#64921#67681#0" expanded="false" />
-            <element signature="e#67716#70611#0" expanded="false" />
-            <element signature="e#70655#73053#0" expanded="false" />
-            <element signature="e#73164#74395#0" expanded="false" />
-            <element signature="e#74509#77659#0" expanded="false" />
+            <element signature="e#0#56#1" expanded="false" />
+            <element signature="e#57#70#0" expanded="true" />
+            <element signature="e#3266#3956#0" expanded="false" />
+            <element signature="e#4228#4390#0" expanded="false" />
+            <element signature="e#22426#33830#0" expanded="false" />
+            <element signature="e#45710#47661#0" expanded="false" />
+            <element signature="e#45814#46008#0" expanded="false" />
+            <element signature="e#46040#46621#0" expanded="false" />
+            <element signature="e#66882#67047#0" expanded="false" />
+            <element signature="e#67327#67644#0" expanded="false" />
+            <element signature="e#67884#68034#0" expanded="false" />
+            <element signature="e#68273#68507#0" expanded="false" />
+            <element signature="e#68725#69044#0" expanded="false" />
+            <element signature="e#69190#69343#0" expanded="false" />
+            <element signature="e#70940#72042#0" expanded="false" />
+            <element signature="e#72078#74058#0" expanded="false" />
+            <element signature="e#77145#80368#0" expanded="false" />
+            <element signature="e#80412#82810#0" expanded="false" />
+            <element signature="e#85173#88323#0" expanded="false" />
+            <marker date="1467666743770" expanded="false" signature="704:1297" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="1323:2230" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="2265:2798" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="2835:3027" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="3070:3234" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="3979:4196" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="17156:17528" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="17567:17697" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="17725:22360" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="33881:36485" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="36515:37180" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="37206:37877" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="37903:38376" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="38407:38648" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="38708:41000" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="41028:42284" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="42310:42709" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="42733:43995" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="44024:45684" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="53032:62545" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="56630:56813" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="56843:57979" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="58007:59916" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="59937:60142" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="60179:61878" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="61912:62545" ph="..." />
           </folding>
         </state>
       </provider>
     </entry>
     <entry file="file://$PROJECT_DIR$/temp">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="180">
-          <caret line="12" column="39" selection-start-line="12" selection-start-column="39" selection-end-line="12" selection-end-column="39" />
+        <state relative-caret-position="408">
+          <caret line="24" column="33" selection-start-line="24" selection-start-column="33" selection-end-line="24" selection-end-column="33" />
+          <folding />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/guitest.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1581">
+          <caret line="1383" column="27" selection-start-line="1383" selection-start-column="27" selection-end-line="1383" selection-end-column="27" />
           <folding>
-            <marker date="1467643155000" expanded="true" signature="18811:18839" ph="Select an op... " />
+            <element signature="e#0#56#1" expanded="false" />
+            <element signature="e#57#70#0" expanded="true" />
+            <element signature="e#3266#3956#0" expanded="false" />
+            <element signature="e#4228#4390#0" expanded="false" />
+            <element signature="e#22426#33830#0" expanded="false" />
+            <element signature="e#45710#47661#0" expanded="false" />
+            <element signature="e#45814#46008#0" expanded="false" />
+            <element signature="e#46040#46621#0" expanded="false" />
+            <element signature="e#66882#67047#0" expanded="false" />
+            <element signature="e#67327#67644#0" expanded="false" />
+            <element signature="e#67884#68034#0" expanded="false" />
+            <element signature="e#68273#68507#0" expanded="false" />
+            <element signature="e#68725#69044#0" expanded="false" />
+            <element signature="e#69190#69343#0" expanded="false" />
+            <element signature="e#70940#72042#0" expanded="false" />
+            <element signature="e#72078#74058#0" expanded="false" />
+            <element signature="e#77145#80368#0" expanded="false" />
+            <element signature="e#80412#82810#0" expanded="false" />
+            <element signature="e#85173#88323#0" expanded="false" />
+            <marker date="1467666743770" expanded="false" signature="704:1297" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="1323:2230" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="2265:2798" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="2835:3027" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="3070:3234" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="3979:4196" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="17156:17528" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="17567:17697" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="17725:22360" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="33881:36485" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="36515:37180" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="37206:37877" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="37903:38376" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="38407:38648" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="38708:41000" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="41028:42284" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="42310:42709" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="42733:43995" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="44024:45684" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="53032:62545" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="56630:56813" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="56843:57979" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="58007:59916" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="59937:60142" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="60179:61878" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="61912:62545" ph="..." />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/temp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="408">
+          <caret line="24" column="33" selection-start-line="24" selection-start-column="33" selection-end-line="24" selection-end-column="33" />
+          <folding />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/guitest.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="0">
+          <caret line="0" column="0" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
+          <folding>
+            <element signature="e#0#56#1" expanded="false" />
+            <element signature="e#57#70#0" expanded="true" />
+            <element signature="e#3266#3956#0" expanded="false" />
+            <element signature="e#4228#4390#0" expanded="false" />
+            <element signature="e#22426#33830#0" expanded="false" />
+            <element signature="e#45710#47661#0" expanded="false" />
+            <element signature="e#45814#46008#0" expanded="false" />
+            <element signature="e#46040#46621#0" expanded="false" />
+            <element signature="e#66882#67047#0" expanded="false" />
+            <element signature="e#67327#67644#0" expanded="false" />
+            <element signature="e#67884#68034#0" expanded="false" />
+            <element signature="e#68273#68507#0" expanded="false" />
+            <element signature="e#68725#69044#0" expanded="false" />
+            <element signature="e#69190#69343#0" expanded="false" />
+            <element signature="e#70940#72042#0" expanded="false" />
+            <element signature="e#72078#74058#0" expanded="false" />
+            <element signature="e#77145#80368#0" expanded="false" />
+            <element signature="e#80412#82810#0" expanded="false" />
+            <element signature="e#85173#88323#0" expanded="false" />
+            <marker date="1467666743770" expanded="false" signature="704:1297" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="1323:2230" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="2265:2798" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="2835:3027" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="3070:3234" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="3979:4196" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="17156:17528" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="17567:17697" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="17725:22360" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="33881:36485" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="36515:37180" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="37206:37877" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="37903:38376" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="38407:38648" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="38708:41000" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="41028:42284" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="42310:42709" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="42733:43995" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="44024:45684" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="53032:62545" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="56630:56813" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="56843:57979" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="58007:59916" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="59937:60142" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="60179:61878" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="61912:62545" ph="..." />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file:///Library/Frameworks/Python.framework/Versions/2.7/lib/python2.7/lib-tk/Tkinter.py" />
+    <entry file="file://$PROJECT_DIR$/temp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="408">
+          <caret line="24" column="28" selection-start-line="24" selection-start-column="28" selection-end-line="24" selection-end-column="28" />
+          <folding />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/test.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="119">
+          <caret line="16" column="46" selection-start-line="16" selection-start-column="46" selection-end-line="16" selection-end-column="46" />
+          <folding />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/temp.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-209">
+          <caret line="71" column="52" selection-start-line="71" selection-start-column="41" selection-end-line="71" selection-end-column="52" />
+          <folding>
+            <element signature="e#7680#11701#0" expanded="false" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/guitest.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="216">
+          <caret line="1427" column="67" selection-start-line="1427" selection-start-column="67" selection-end-line="1427" selection-end-column="67" />
+          <folding>
+            <element signature="e#0#56#1" expanded="false" />
+            <element signature="e#57#70#0" expanded="true" />
+            <element signature="e#3266#3956#0" expanded="false" />
+            <element signature="e#4228#4390#0" expanded="false" />
+            <element signature="e#22426#33830#0" expanded="false" />
+            <element signature="e#45710#47661#0" expanded="false" />
+            <element signature="e#45814#46008#0" expanded="false" />
+            <element signature="e#46040#46621#0" expanded="false" />
+            <element signature="e#66882#67047#0" expanded="false" />
+            <element signature="e#67327#67644#0" expanded="false" />
+            <element signature="e#67884#68034#0" expanded="false" />
+            <element signature="e#68273#68507#0" expanded="false" />
+            <element signature="e#68725#69044#0" expanded="false" />
+            <element signature="e#69190#69343#0" expanded="false" />
+            <element signature="e#70940#72042#0" expanded="false" />
+            <element signature="e#72078#74058#0" expanded="false" />
+            <element signature="e#77145#80368#0" expanded="false" />
+            <element signature="e#80412#82810#0" expanded="false" />
+            <element signature="e#85173#88323#0" expanded="false" />
+            <marker date="1467666743770" expanded="false" signature="704:1297" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="1323:2230" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="2265:2798" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="2835:3027" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="3070:3234" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="3979:4196" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="17156:17528" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="17567:17697" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="17725:22360" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="33881:36485" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="36515:37180" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="37206:37877" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="37903:38376" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="38407:38648" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="38708:41000" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="41028:42284" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="42310:42709" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="42733:43995" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="44024:45684" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="53032:62545" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="56630:56813" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="56843:57979" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="58007:59916" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="59937:60142" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="60179:61878" ph="..." />
+            <marker date="1467666743770" expanded="false" signature="61912:62545" ph="..." />
           </folding>
         </state>
       </provider>

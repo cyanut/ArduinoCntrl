@@ -1,3 +1,6 @@
+"""
+For use with LabJack U6 and PTGrey FMVU-03MTC-CS
+"""
 import serial
 import time
 import os
@@ -14,6 +17,7 @@ from struct import *
 from datetime import datetime
 from operator import itemgetter
 from pprint import pprint
+import shutil
 
 import numpy as np
 import Tkinter as Tk
@@ -27,8 +31,9 @@ import Pmw
 
 
 #################################################################
-# Global Constants
+# Global Variables
 NUM_LJ_CH = 14
+SAVE_ON_EXIT = True
 
 
 # Misc. Functions
@@ -152,6 +157,26 @@ def list_serial_ports():
             pass
     return result
 
+
+def pin_to_int(pin):
+    """
+    Returns the integer representation of
+    any given arduino pin
+    """
+    if pin < 8:
+        return int("1" + "0" * int(pin), 2)
+    if 8 <= pin <= 13:
+        return int("1" + "0" * (int(pin) - 8), 2)
+
+
+def dict_flatten(*args):
+    """
+    flattens the given dictionary into a list
+    """
+    hold = []
+    for a in args:
+        hold.append([i for s in a.values() for i in s])
+    return hold
 
 #################################################################
 # GUIs
@@ -300,13 +325,20 @@ class MasterGUI(object):
                  relief=Tk.RAISED).grid(row=0,
                                         columnspan=80,
                                         sticky=self.ALL)
-        # Debug Button (Prints all attributes of dirs.settings)
+        # Debug Buttons
         Tk.Button(ard_frame,
                   text='DEBUG',
                   command=lambda: pprint(vars(dirs.settings))).grid(row=0,
                                                                     column=80,
-                                                                    columnspan=20,
+                                                                    columnspan=10,
                                                                     sticky=self.ALL)
+        Tk.Button(ard_frame,
+                  text='ClrSvs',
+                  command=lambda:
+                  dirs.clear_saves(self.master)).grid(row=0,
+                                                      column=90,
+                                                      columnspan=10,
+                                                      sticky=self.ALL)
         # Main Progress Canvas
         self.ard_canvas = Tk.Canvas(ard_frame,
                                     width=1050,
@@ -1010,6 +1042,18 @@ class GUI(object):
         self.root.mainloop()
 
     @staticmethod
+    def platform_geometry(windows, darwin):
+        """
+        Returns window dimensions based on platform
+        """
+        if sys.platform.startswith('win'):
+            return windows
+        elif sys.platform.startswith('darwin'):
+            return darwin
+        else:
+            return False
+
+    @staticmethod
     def create_tk_vars(types, num):
         """
         Turns input array into Tkinter Variables
@@ -1122,17 +1166,14 @@ class PhotometryGUI(GUI):
             true_freq = int(self.main_entry.get().strip())
             isos_freq = int(self.isos_entry.get().strip())
             if true_freq == 0 or isos_freq == 0:
-                print 1
                 tkMb.showinfo('Error!', 'Stimulation Frequencies '
                                         'must be higher than 0 Hz!',
                               parent=self.root)
             elif true_freq == isos_freq:
-                print 2
                 tkMb.showinfo('Error!', 'Main sample and Isosbestic Frequencies '
                                         'should not be the same value.',
                               parent=self.root)
             else:
-                print 3
                 self.stim_freq = {'main': true_freq,
                                   'isos': isos_freq}
                 self.root.destroy()
@@ -1390,22 +1431,180 @@ class ArduinoGUI(GUI):
         self.ser_port = dirs.settings.ser_port
         [self.packet, self.tone_pack,
          self.out_pack, self.pwm_pack] = dirs.settings.quick_ard()
+        self.max_time = 0
+        self.raw_data = {}
+        for i in range(2, 14):
+            self.raw_data[i] = {}
 
-    def confirm(self, types):
+    # noinspection PyTypeChecker,PyStatementEffect,PyUnboundLocalVariable
+    def entry_validate(self, types, pins=False, rows=None):
         """
         Checks inputs are valid and exits
         """
-        validity = False
+        # We MUST return either True or False
+        # Setup row and pin Identity of target entry
+        pin = None
+        row = int(rows)
+        if pins:
+            pin = int(pins)
+        # Setup parameters for each type of incoming input
+        entry, err_place_msg, arg_types = None, '', []
+        pin_ids = 0
         if types == 'tone':
-            pass
-        elif types == 'pwm':
-            pass
+            pin_ids = 10
+            entry = self.entries[row]
+            arg_types = ['Time On (s)', 'Time until Off (s)', 'Frequency (Hz)']
+            err_place_msg = 'row [{:0>2}]'.format(row+1)
         elif types == 'output':
-            pass
-        validity = True
-        if validity:
-            self.root.destroy()
-            self.root.quit()
+            pin_ids = range(2, 8)
+            pin_ids = pin_ids[pin]
+            entry = self.entries[pin][row]
+            arg_types = ['Time On (s)', 'Time until Off (s)']
+            err_place_msg = 'row [{:0>2}], pin [{:0>2}]'.format(row+1, pin_ids)
+        elif types == 'pwm':
+            pin_ids = range(8, 14)
+            pin_ids.remove(10)
+            pin_ids = pin_ids[pin]
+            entry = self.entries[pin][row]
+            arg_types = ['Time On (s)', 'Time until Off (s)', 'Frequency (Hz)',
+                         'Duty Cycle (%)', 'Phase Shift (deg)']
+            err_place_msg = 'row [{:0>2}], pin [{:0>2}]'.format(row+1, pin_ids)
+        # Grab comma separated user inputs as a list
+        inputs = entry.get().split(',')
+        for i in range(len(inputs)):
+            inputs[i] = inputs[i].strip()
+        # Now we begin to check entry validity
+        # 1. Check Commas don't occur at ends or there exist any doubles:
+        while True:
+            time.sleep(0.0001)
+            if '' in inputs:
+                inputs.pop(inputs.index(''))
+            else:
+                break
+        # 2. Check we have correct number of input arguments
+        num_args = len(arg_types)
+        error_str = ''
+        for i in range(num_args):
+            if i == 2:
+                error_str += '\n'
+            error_str += str(arg_types[i])
+            if i < num_args-1:
+                error_str += ', '
+        # 2a. More than 0 but not num_args
+        if len(inputs) != num_args and len(inputs) > 0:
+            tkMb.showinfo('Error!',
+                          'Error in {}:\n'
+                          'Setup requires [{}] arguments for each entry.\n\n'
+                          'Comma separated in this order:\n\n'
+                          '[{}]'.format(err_place_msg, num_args, error_str),
+                          parent=self.root)
+            return False
+        # 2b. Exactly 0
+        if len(inputs) == 0:
+            return False
+        # 3. Check input content are valid
+        try:
+            on, off = int(inputs[0]), int(inputs[1])
+            on_ms, off_ms = on*1000, off*1000
+            refr, freq, phase, duty_cycle = [], 0, 0, 0
+            if types == 'tone':
+                freq = int(inputs[2])
+                refr = freq
+            elif types == 'pwm':
+                freq = int(inputs[2])
+                duty_cycle = int(inputs[3])
+                phase = int(inputs[4])
+                refr = long('{:0>5}{:0>5}{:0>5}'.format(freq, duty_cycle, phase))
+            # 3a. If on+off > main gui max time, we change gui time at close
+            if (on_ms+off_ms) > self.max_time and off_ms != 0:
+                    self.max_time = on_ms+off_ms
+            # 3b. Time interval for each entry must be > 0
+            if off_ms == 0:
+                tkMb.showinfo('Error!',
+                              'Error in {}:\n\n'
+                              'Time Interval (i.e. '
+                              'Time until On) '
+                              'cannot be 0s!'.format(err_place_msg),
+                              parent=self.root)
+                return False
+            # 3c. Type specific checks
+            if types == 'tone':
+                if freq < 50:
+                    tkMb.showinfo('Error!',
+                                  'Error in {}:\n\n'
+                                  'The TONE function works '
+                                  'best for high frequencies.\n\n'
+                                  'Use the PWM function '
+                                  'instead for low Hz '
+                                  'frequency modulation',
+                                  parent=self.root)
+                    return False
+            if types == 'pwm':
+                if phase not in range(361):
+                    tkMb.showinfo('Error!',
+                                  'Error in {}:\n\n'
+                                  'Phase Shift must be an integer\n'
+                                  'between 0 and 360 degrees.'.format(err_place_msg),
+                                  parent=self.root)
+                    return False
+                if duty_cycle not in range(1, 100):
+                    tkMb.showinfo('Error!',
+                                  'Error in {}:\n\n'
+                                  'Duty Cycle must '
+                                  'be an integer '
+                                  'percentage between '
+                                  '1 and 99 inclusive.'.format(err_place_msg),
+                                  parent=self.root)
+                    return False
+                if freq > 100:
+                    tkMb.showinfo('Error!',
+                                  'Error in {}:\n\n'
+                                  'The PWM function works best'
+                                  'for frequencies <= 100 Hz.\n\n'
+                                  'Use the TONE function or an'
+                                  'external wave '
+                                  'generator instead.'.format(err_place_msg))
+                    return False
+        except ValueError:
+            tkMb.showinfo('Error!',
+                          'Error in {}:\n\n'
+                          'Input arguments '
+                          'must be comma '
+                          'separated integers'.format(err_place_msg),
+                          parent=self.root)
+            return False
+        # 4. Check if any time intervals overlap
+        #       Rules:
+        #       - Time intervals cannot overlap for the same pin at different [refr] values
+        #       - Time intervals overlapping at the same [refr] will be combined
+        #       Therefore:
+        #       - OUTPUT Pins can always overlap. We just need to combine the time inputs
+        #       - PWM Pins can overlap iff same [refr]; else raise error
+        #       - Tone is one pin only. Only overlap if same [freq]
+        try:
+
+        return True
+
+    def close(self):
+        """
+        Exits the GUI
+        """
+        # use close to get last batch of data (since updates only happen
+        # with focus off otherwise)
+        # best method: scan all full fields and match with save list
+        # then index it and run entry validate
+        if self.max_time > dirs.settings.ard_last_used['packet'][3]:
+            dirs.settings.ard_last_used['packet'][3] = self.max_time
+            main.ttl_time = self.max_time
+            main.grab_ard_data(destroy=True)
+            mins = min_from_sec(self.max_time/1000, option='min')
+            secs = min_from_sec(self.max_time/1000, option='sec')
+            main.min_entry.delete(0, Tk.END)
+            main.min_entry.insert(Tk.END, '{:0>2}'.format(mins))
+            main.sec_entry.delete(0, Tk.END)
+            main.sec_entry.insert(Tk.END, '{:0>2}'.format(secs))
+        self.root.destroy()
+        self.root.quit()
 
     def button_toggle(self, tags):
         """
@@ -1416,13 +1615,11 @@ class ArduinoGUI(GUI):
         """
         if tags == 'tone':
             if self.tone_var.get() == 0:
-                for entry in range(self.columns):
-                    for row in range(self.num_entries):
-                        self.entries[row][entry].configure(state=Tk.DISABLED)
+                for row in range(self.num_entries):
+                    self.entries[row].configure(state=Tk.DISABLED)
             elif self.tone_var.get() == 1:
-                for entry in range(self.columns):
-                    for row in range(self.num_entries):
-                        self.entries[row][entry].configure(state=Tk.NORMAL)
+                for row in range(self.num_entries):
+                    self.entries[row].configure(state=Tk.NORMAL)
         else:
             var, ind = None, None
             if tags in self.output_ids:
@@ -1445,42 +1642,47 @@ class ArduinoGUI(GUI):
             None
         """
         self.root.title('Tone Configuration')
-        num_pins, self.num_entries, self.columns = 1, 15, 3
+        num_pins, self.num_entries = 1, 15
         scroll_frame = ScrollFrame(self.root, num_pins, self.num_entries+1)
         # Setup Buttons
         self.tone_var = Tk.IntVar()
         self.tone_var.set(0)
         button = Tk.Checkbutton(scroll_frame.top_frame,
-                                text='Enable Tone (Arduino Pin 10)',
+                                text='Enable Tone\n'
+                                     '(Arduino Pin 10)',
                                 variable=self.tone_var,
                                 onvalue=1, offvalue=0,
                                 command=lambda tags='tone': self.button_toggle(tags))
         button.pack()
         # Setup Entries
-        self.entries = []
-        for i in range(self.num_entries):
-            self.entries.append(copy.deepcopy([copy.deepcopy([])]*self.columns))
-        Tk.Label(scroll_frame.middle_frame, text='Time On(s)').grid(row=0, column=1)
-        Tk.Label(scroll_frame.middle_frame, text='Time Off(s)').grid(row=0, column=2)
-        Tk.Label(scroll_frame.middle_frame, text='Freq(Hz)').grid(row=0, column=3)
+        self.entries = copy.deepcopy([[]]*self.num_entries)
+        Tk.Label(scroll_frame.middle_frame,
+                 text='Time On(s), '
+                      'Time until Off(s), '
+                      'Freq (Hz)').grid(row=0, column=1, sticky=self.ALL)
         for row in range(self.num_entries):
             Tk.Label(scroll_frame.middle_frame,
                      text='{:0>2}'.format(row+1)).grid(row=row+1, column=0)
-            for entry in range(3):
-                self.entries[row][entry] = Tk.Entry(
-                    scroll_frame.middle_frame, width=7)
-                self.entries[row][entry].grid(
-                    row=row+1, column=entry+1)
-                self.entries[row][entry].config(state=Tk.DISABLED)
+            validate = (scroll_frame.middle_frame.register(self.entry_validate),
+                        'tone', False, row)
+            self.entries[row] = Tk.Entry(
+                scroll_frame.middle_frame,
+                validate='focusout',
+                validatecommand=validate)
+            self.entries[row].grid(row=row+1, column=1, sticky=self.ALL)
+            self.entries[row].config(state=Tk.DISABLED)
         # Confirm button
         Tk.Button(scroll_frame.bottom_frame,
                   text='CONFIRM',
-                  command=lambda:
-                  self.confirm('tone')).pack(side=Tk.TOP)
+                  command=self.close).pack(side=Tk.TOP)
         scroll_frame.finalize()
         # Finish setup
         self.center()
-        self.root.geometry('257x272')
+        geometry = self.platform_geometry('250x325', '257x272')
+        if geometry:
+            self.root.geometry(geometry)
+        else:
+            pass
 
     def output_setup(self):
         """
@@ -1522,19 +1724,22 @@ class ArduinoGUI(GUI):
             Tk.Label(scroll_frame.middle_frame,
                      text='Pin {:0>2}\n'
                           'Time On(s), '
-                          'Time Off(s)'.format(self.output_ids[pin])).grid(row=0,
-                                                                           column=1+pin)
+                          'Time until Off(s)'.format(self.output_ids[pin])).grid(row=0,
+                                                                                 column=1+pin)
             for row in range(self.num_entries):
+                validate = (scroll_frame.middle_frame.register(self.entry_validate),
+                            'output', pin, row)
                 Tk.Label(scroll_frame.middle_frame,
                          text='{:0>2}'.format(row+1)).grid(row=row+1, column=0)
-                self.entries[pin][row] = Tk.Entry(scroll_frame.middle_frame, width=18)
+                self.entries[pin][row] = Tk.Entry(scroll_frame.middle_frame, width=18,
+                                                  validate='focusout',
+                                                  validatecommand=validate)
                 self.entries[pin][row].grid(row=row+1, column=1+pin)
                 self.entries[pin][row].config(state=Tk.DISABLED)
         # Confirm Button
         Tk.Button(scroll_frame.bottom_frame,
                   text='CONFIRM',
-                  command=lambda:
-                  self.confirm('output')).pack(side=Tk.TOP)
+                  command=self.close).pack(side=Tk.TOP)
         # Finish GUI Setup
         scroll_frame.finalize()
         self.root.geometry('980x280')
@@ -1552,16 +1757,16 @@ class ArduinoGUI(GUI):
         info_frame = Tk.LabelFrame(scroll_frame.top_frame,
                                    text='Enable Arduino Pins')
         info_frame.grid(row=0, column=0, sticky=self.ALL)
-        Tk.Label(info_frame, text=' '*6).pack(side=Tk.RIGHT)
-        Tk.Label(info_frame, text='e.g. 0,180,200,20,90   (Per Entry Box)',
+        Tk.Label(info_frame, text=' '*2).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame, text='e.g. 0,180,200,20,90  (Per Field)',
                  relief=Tk.RAISED).pack(side=Tk.RIGHT)
-        Tk.Label(info_frame, text=' '*5).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame, text=' '*2).pack(side=Tk.RIGHT)
         Tk.Label(info_frame,
                  text='Enable pins, then input instructions '
-                      'line by line with comma separation.',
+                      'with comma separation.',
                  relief=Tk.RAISED).pack(side=Tk.RIGHT)
         Tk.Label(info_frame,
-                 text=' '*10).pack(side=Tk.RIGHT)
+                 text=' '*5).pack(side=Tk.RIGHT)
         # Variables
         self.entries = []
         for pin in range(num_pins):
@@ -1581,28 +1786,34 @@ class ArduinoGUI(GUI):
             button[pin].pack(side=Tk.LEFT)
             Tk.Label(scroll_frame.middle_frame,
                      text='Pin {:0>2}\n'
-                          'On(s), '
-                          'Off(s), '
-                          'Freq(Hz),\n'
-                          'Duty Cycle (%), '
-                          'Phase Shift (Deg)'.format(self.pwm_ids[pin])).grid(row=0,
-                                                                              column=1+pin)
+                          'Time On(s), '
+                          'Time until Off(s), \n'
+                          'Freq (Hz), '
+                          'Duty Cycle (%),\n'
+                          'Phase Shift '.format(self.pwm_ids[pin])+'('+u'\u00b0'+')').grid(row=0, column=1+pin)
             for row in range(self.num_entries):
+                validate = (scroll_frame.middle_frame.register(self.entry_validate),
+                            'pwm', pin, row)
                 Tk.Label(scroll_frame.middle_frame,
                          text='{:0>2}'.format(row+1)).grid(row=row+1, column=0)
-                self.entries[pin][row] = Tk.Entry(
-                    scroll_frame.middle_frame, width=25)
+                self.entries[pin][row] = Tk.Entry(scroll_frame.middle_frame, width=25,
+                                                  validate='focusout',
+                                                  validatecommand=validate)
                 self.entries[pin][row].grid(
                     row=row+1, column=1+pin)
                 self.entries[pin][row].config(state='disabled')
         # Confirm Button
         Tk.Button(scroll_frame.bottom_frame,
                   text='CONFIRM',
-                  command=lambda:
-                  self.confirm('pwm')).pack(side=Tk.TOP)
+                  command=self.close).pack(side=Tk.TOP)
         # Finish Tone Setup
         scroll_frame.finalize()
-        self.root.geometry('1100x280')
+        geometry = self.platform_geometry(windows=False,
+                                          darwin='1100x280')
+        if geometry:
+            self.root.geometry(geometry)
+        else:
+            pass
         self.center()
 
 
@@ -1708,6 +1919,28 @@ class Directories(object):
         """
         with open(dirs.user_home + '/frSettings.frcl', 'wb') as settings_file:
             pickle.dump(self.settings, settings_file)
+
+    def clear_saves(self, root_reference):
+        """
+        Removes all settings and save directories.
+        """
+        global SAVE_ON_EXIT
+        if tkMb.askyesno('Warning!',
+                         'This DELETES all settings, presets, '
+                         'and data output saves!\n'
+                         'It should be used for '
+                         'debugging purposes only.\n\n'
+                         'Are you sure?',
+                         default='no'):
+            shutil.rmtree(self.user_home+'/desktop/frCntrlSaves/')
+            os.remove(self.user_home+'/frSettings.frcl')
+            time.sleep(0.5)
+            tkMb.showinfo('Finished',
+                          'All Settings and Save Directories Deleted.\n'
+                          'Program will now exit.')
+            SAVE_ON_EXIT = False
+            root_reference.destroy()
+            root_reference.quit()
 
 
 #################################################################
@@ -1825,5 +2058,6 @@ main = MasterGUI(Tk.Tk())
 main.master.mainloop()
 
 # Save Settings for Next Run
-dirs.save()
+if SAVE_ON_EXIT:
+    dirs.save()
 #################################################################
