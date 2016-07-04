@@ -1,3 +1,454 @@
+
+def get_data_errorCheck(ask_data ,types ,bestLen ,starts ,middles ,ends ,dataHold):
+	global total_time
+	on, off, on_time, off_time, freq, pins, refr, dutyCycle, phase = [-1 ] *9
+	analysisLoop = 0
+	try:
+		on, off = int(ask_data.split(",")[0]), int(ask_data.split(",")[1])
+		on_time, off_time = on* 1000, off * 1000
+		if types == "tone":
+			freq = int(ask_data.split(",")[2])
+			refr = freq
+		elif types == "output":
+			pins = int(ask_data.split(",")[2])
+			refr = pins
+		if types == "pwm":
+			freq = int(ask_data.split(",")[2])
+			pins = int(ask_data.split(",")[3])
+			dutyCycle = int(ask_data.split(",")[4])
+			phase = int(ask_data.split(",")[5])
+			refr = long(
+				printDigits(freq, 5, True, "0") + printDigits(dutyCycle, 5, True, "0") + printDigits(phase, 5, True,
+																									 "0"))
+		if (on_time + off_time) > total_time:
+			print "\n\n>>>Stimuli time cannot exceed total time of " + str(total_time / 1000) + "s."
+			analysisLoop = 1
+		elif off_time == 0:
+			print "\n\n>>>Time interval cannot be 0s!"
+			analysisLoop = 1
+		elif types == "tone":
+			if freq < 50:
+				print "\n\n>>>TONE will not function properly with low frequencies."
+				print ">>>Use the PWM function instead."
+				analysisLoop = 1
+		elif types == "output":
+			if pins not in [2, 3, 4, 5, 6, 7]:
+				print "\n\n>>>Simple OUTPUTS must use pins 2-7.\n[TRY AGAIN]"
+				analysisLoop = 1
+		elif types == "pwm":
+			if phase not in range(361):
+				print "\n\nThe PHASE_SHIFT must be an integer within 360 degrees."
+				analysisLoop = 1
+			if pins not in [8, 9, 11, 12, 13]:
+				print "\n\n>>>FREQUENCY_MODULATION must use pins 8 - 13 (10 EXCLUDED)"
+				analysisLoop = 1
+			elif dutyCycle > 99 or dutyCycle < 1:
+				print "\n\n>>>The DUTY_CYCLE_PERCENTAGE must be an integer between 1 and 99"
+				analysisLoop = 1
+			elif freq > 100:
+				print "\n\n>>>It's recommended to use the TONE function for high frequencies."
+				print ">>>Alternatively, use an external function generator"
+				print "Try Again with a lower frequency (<100Hz)."
+				analysisLoop = 1
+	except ValueError:
+		print "\n\n>>>Did you specify %s INTEGER parameters?" % bestLen
+		analysisLoop = 1
+	if types == "pwm":
+		pinInt = posToInt(pins)
+		startsLrg, middlesLrg, endsLrg, dataHoldLrg = starts, middles, ends, dataHold
+		try:
+			startsLrg[pins], middlesLrg[pins], endsLrg[pins], dataHoldLrg[pinInt]
+		except KeyError:
+			startsLrg[pins], middlesLrg[pins], endsLrg[pins], dataHoldLrg[pinInt] = {}, {}, {}, {}
+		starts, middles, ends, dataHold = startsLrg[pins], middlesLrg[pins], endsLrg[pins], dataHoldLrg[pinInt]
+	try:
+		starts[refr], middles[refr], ends[refr]
+	except KeyError:
+		starts[refr], middles[refr], ends[refr] = [], [], []
+	if types in ["tone", "pwm"]:
+		try:
+			dataHold[refr]
+		except KeyError:
+			dataHold[refr] = []
+		startsAll, middlesAll, endsAll = dictFlatten(starts, middles, ends)
+	if types == "output":
+		startsAll, middlesAll, endsAll = starts[pins], middles[pins], ends[pins]
+	if on in startsAll or on + off in endsAll or on in middlesAll or on + off in middlesAll:
+		append = ""
+		if types in ["pwm", "output"]:
+			append = " for PIN %s" % pins
+		print "\n\nTime intervals cannot overlap" + append + "!"
+		analysisLoop = 1
+	if types == "pwm":
+		starts, middles, ends, dataHold = startsLrg, middlesLrg, endsLrg, dataHoldLrg
+	return on, off, on_time, off_time, freq, pins, analysisLoop, refr, starts, middles, ends, dataHold, dutyCycle, phase
+
+
+def get_data_invMod(types, dataHold, on_time, off_time, front, back, refr):
+	if types in ["pwm", "tone"]:
+		if front == 0 and back == 0:
+			dataHold[refr].append(on_time)
+			dataHold[refr].append(on_time + off_time)
+		if front == 1:
+			dataHold[refr].remove(on_time)
+			dataHold[refr].remove(on_time)
+		if back == 1:
+			dataHold[refr].remove(on_time + off_time)
+			dataHold[refr].remove(on_time + off_time)
+	elif types == "output":
+		pinInt = posToInt(refr)
+		if front == 0 and back == 0:
+			if on_time not in dataHold:
+				dataHold[on_time] = pinInt
+			elif on_time in dataHold:
+				dataHold[on_time] += pinInt
+			if on_time + off_time not in dataHold:
+				dataHold[on_time + off_time] = pinInt
+			elif on_time + off_time in dataHold:
+				dataHold[on_time + off_time] += pinInt
+		if front == 1:
+			if dataHold[on_time] == (2 * pinInt):
+				dataHold.pop(on_time)
+			else:
+				dataHold[on_time] -= (2 * pinInt)
+		if back == 1:
+			if dataHold[on_time + off_time] == (2 * pinInt):
+				dataHold.pop(on_time + off_time)
+			else:
+				dataHold[on_time + off_time] -= (2 * pinInt)
+	return dataHold
+
+
+def get_data(types):
+	global total_time
+	starts, middles, ends, dataHold = {}, {}, {}, {}
+	if types in ["tone", "output"]:
+		name, bestLen = types, 3
+	elif types == "pwm":
+		name, bestLen = "FREQUENCY_MODULATION", 6
+	gfxSetup(types)
+	while True:  # mainLoop
+		ask_data = raw_input("(type 'done' when finished [" + name + "_SETUP]): ").lower()
+		length = len(ask_data.split(","))
+		if ask_data == "done":
+			break  # mainLoop
+		elif not length == bestLen:
+			print "\n\n>>>Did you specify %s separate parameters?\n[TRY AGAIN]" % bestLen
+		else:
+			analysisLoop = 0
+			while analysisLoop == 0:
+				tempHold = get_data_errorCheck(ask_data, types, bestLen, starts, middles, ends, dataHold)
+				on, off, on_time, off_time, freq, pins, analysisLoop, refr, starts, middles, ends, dataHold, dutyCycle, phase = tempHold
+				if analysisLoop != 0:
+					break  # analysisLoop
+				if types == "pwm":
+					pinInt = posToInt(pins)
+					startsLrg, middlesLrg, endsLrg, dataHoldLrg = starts, middles, ends, dataHold
+					starts, middles, ends, dataHold = startsLrg[pins], middlesLrg[pins], endsLrg[pins], dataHoldLrg[
+						pinInt]
+				middles[refr] += range(on + 1, on + off)
+				front, back = 0, 0
+				dataHold = get_data_invMod(types, dataHold, on_time, off_time, front, back, refr)
+				if on in ends[refr] and on + off not in starts[refr]:
+					front, back = 1, 0
+					middles[refr].append(on)
+					ends[refr].remove(on)
+					ends[refr].append(on + off)
+					dataHold = get_data_invMod(types, dataHold, on_time, off_time, front, back, refr)
+				elif on not in ends[refr] and on + off in starts[refr]:
+					front, back = 0, 1
+					middles[refr].append(on + off)
+					starts[refr].remove(on + off)
+					starts[refr].append(on)
+					dataHold = get_data_invMod(types, dataHold, on_time, off_time, front, back, refr)
+				elif on in ends[refr] and on + off in starts[refr]:
+					front, back = 1, 1
+					middles[refr].append(on)
+					middles[refr].append(on + off)
+					starts[refr].remove(on + off)
+					ends[refr].remove(on)
+					dataHold = get_data_invMod(types, dataHold, on_time, off_time, front, back, refr)
+				else:
+					starts[refr].append(on)
+					ends[refr].append(on + off)
+				if types == "pwm":
+					starts, middles, ends, dataHold = startsLrg, middlesLrg, endsLrg, dataHoldLrg
+				analysisLoop = 1  # breaks analysisLoop at very end.
+	dataHoldDone = []
+	if types == "output":
+		dataHoldDone = dataHold
+	if types == "tone":
+		for freq in dataHold:
+			dataHold[freq] = sorted(dataHold[freq])
+			for i in range(len(dataHold[freq])):
+				if i % 2 == 0:
+					dataHoldDone.append([dataHold[freq][i], dataHold[freq][i + 1], freq])
+	if types == "pwm":
+		for pinInt in dataHold:
+			for refr in dataHold[pinInt]:
+				refri = str(refr)
+				freqi, dutyi, phasei = int(refri[:-10]), int(refri[-10:-5]), int(refri[-5:])
+				dataHold[pinInt][refr] = sorted(dataHold[pinInt][refr])
+				for i in range(len(dataHold[pinInt][refr])):
+					if i % 2 == 0:
+						dataHoldDone.append(
+							[0, dataHold[pinInt][refr][i], dataHold[pinInt][refr][i + 1], freqi, pinInt, phasei, dutyi])
+	return dataHoldDone
+
+
+Loop1 = retrieveSettings(ask_file, allFiles)
+
+
+def retrieveSettings(ask_file, allFiles):
+	Loop1 = 0
+	if ask_file == "y":
+		print gfxBar(40, 1, ">>>EXISTING SETTINGS AND DESCRIPTIONS: ")
+		for i in allFiles:
+			f = open(presetDir + i, "r")
+			print "[" + i[:-4] + "]: " + f.readline().lower()
+			f.close()
+		print "#" * 30
+		print "\nInput one of the above settings to continue."
+		Loop2 = 0
+		while Loop2 == 0:
+			file_name = raw_input("Alternatively, type [exit()] to choose another option: ").lower()
+			if file_name == "exit()":
+				Loop2 = 1
+			elif os.path.isfile(presetDir + file_name + ".txt"):
+				tempHold = fileMultiRead(file_name, 0, packet, tone_pack, out_pack, pwm_pack)
+				packet, tone_pack, out_pack, pwm_pack = tempHold
+				Loop2 = 1
+				Loop1 = 1
+			else:
+				print "\n>>>You did not enter a correct setting name. Try again."
+	elif ask_file == "n":
+		print gfxBar(40, 1, ">>>MANUAL SETUP")
+		# total time
+		packet[3] = get_time()
+		# tone
+		tone = get_data("tone")
+		packet[4] = len(tone)
+		for i in tone:
+			tone_pack.append(["<LLH"] + i)
+		tone_pack = sorted(tone_pack, key=itemgetter(1))
+		# outputs
+		output = get_data("output")
+		packet[5] = len(output)
+		for i in output:
+			out_pack.append(["<LB", i, output[i]])
+		out_pack = sorted(out_pack, key=itemgetter(1))
+		# pwm
+		pwm = get_data("pwm")
+		packet[6] = len(pwm)
+		for i in pwm:
+			pwm_pack.append(["<LLLfBBf"] + i)
+		pwm_pack = sorted(pwm_pack, key=itemgetter(2))
+		#
+		Loop3 = 0
+		while Loop3 == 0:
+			ask_save = raw_input("\n\n\n\n>>>Save these Settings? (Y/N): ").lower()
+			if ask_save == "y":
+				Loop4 = 0
+				while Loop4 == 0:
+					ask_name = raw_input("Give this setting a name: ").lower()
+					if ask_name == "exit()":
+						print "\nYou cannot use the [exit()] code as a name. \nTry again."
+					elif not os.path.isfile(presetDir + ask_name + ".txt"):
+						ask_descrp = raw_input("...and a description:\n>>>").lower()
+						print "\nSaving..."
+						fileMultiWrite(ask_name, ask_descrp, packet, tone_pack, out_pack, pwm_pack)
+						time.sleep(0.2)
+						print "New Settings saved to " + presetDir
+						Loop4 = 1
+						Loop3 = 1
+						Loop1 = 1
+					elif os.path.isfile(presetDir + ask_name + ".txt"):
+						print "\n'%s' already exists as a setting!" % ask_name
+						Loop5 = 0
+						while Loop5 == 0:
+							ask_ovrWrt = raw_input("Overwrite this setting name anyway? (Y/N): ").lower()
+							if ask_ovrWrt == "y":
+								ask_descrp = raw_input("\nGive this setting a new description:\n>>> ").lower()
+								print "\nSaving..."
+								fileMultiWrite(ask_name, ask_descrp, packet, tone_pack, out_pack, pwm_pack)
+								time.sleep(0.2)
+								print "Overwritten to " + presetDir
+								Loop5 = 1
+								Loop4 = 1
+								Loop3 = 1
+								Loop1 = 1
+							elif ask_ovrWrt == "n":
+								Loop5 = 1
+							else:
+								print "Type Y/N to Continue"
+			elif ask_save == "n":
+				print "\n\nSettings were not saved.\n\n"
+				Loop3 = 1
+				Loop1 = 1
+			else:
+				print "Type (Y/N) to Continue."
+	else:
+		print "Type (Y/N) to Continue."
+	return Loop1
+
+	global total_time, serPort, baudRate, ser, mainLoopbrk, expName
+
+	print gfxBar(40, 1, ">>>CURRENTLY SELECTED SETTINGS: ")
+	timeSegment = float(packet[3] / 100)
+	print "(Note that the following graphical representation has an error within +/- [1 segment], or [" + str(
+		timeSegment / 1000) + "s]."
+	print "Accurate timings are listed on the right)\n"
+	print "Each segment represents " + str((timeSegment / 1000)) + "s"
+	print "-" * 100 + " [TOTAL TIME]: [" + str(packet[3] / 1000) + "s]"
+	print " " * 101 + "|  ON -  OFF|PIN|Freq-DtyCycl-PhsShft|"
+	gfxTimeDisplay("tones", tone_pack, timeSegment)
+	gfxTimeDisplay("simple outputs", out_pack, timeSegment)
+	gfxTimeDisplay("frequency modulated outputs", pwm_pack, timeSegment)
+	print gfxBar(1)
+	Loop6 = 0
+	while Loop6 == 0:
+		ask_proceed = raw_input("\nAre these settings correct? (Y/N): ").lower()
+		if ask_proceed == "y":
+			Loop6 = 1
+			setupMainLoop = 1
+		elif ask_proceed == "n":
+			print "Clearing...\nPerforming Setup Sequence again..."
+			Loop6 = 1
+			time.sleep(0.5)
+		else:
+			print "Type (Y/N) to Continue."
+
+elif settings == "use_old":
+pass
+expName = raw_input("\n>>>Give this trial an identifying name (e.g. HRHR; GCaMP-1; etc.):\n")
+"""
+
+
+
+
+
+#####
+
+
+
+
+
+
+
+
+
+
+
+
+#####
+#Labjack related
+class LJU6(u6.U6):
+    def streamConfig(self, NumChannels = 1, ResolutionIndex = 0,
+        SamplesPerPacket = 25, SettlingFactor = 0,
+        InternalStreamClockFrequency = 0, DivideClockBy256 = False,
+        ScanInterval = 1, ChannelNumbers = [0], ChannelOptions = [0],
+        ScanFrequency = None, SampleFrequency = None):
+        if NumChannels != len(ChannelNumbers) or NumChannels != len(ChannelOptions):
+            raise LabJackException("NumChannels must match length of ChannelNumbers and ChannelOptions")
+        if len(ChannelNumbers) != len(ChannelOptions):
+            raise LabJackException("len(ChannelNumbers) doesn't match len(ChannelOptions)")
+        if (ScanFrequency is not None) or (SampleFrequency is not None):
+            if ScanFrequency is None:
+                ScanFrequency = SampleFrequency
+            if ScanFrequency < 1000:
+                if ScanFrequency < 25:
+                    SamplesPerPacket = self.findSamplesPerPacket(ScanFrequency,NumChannels) #below 25 ScanFreq, S/P is some multiple of nCh less than SF.
+                DivideClockBy256 = True
+                ScanInterval = 15625/ScanFrequency
+            else:
+                DivideClockBy256 = False
+                ScanInterval = 4000000/ScanFrequency
+        ScanInterval = min( ScanInterval, 65535 )
+        ScanInterval = int( ScanInterval )
+        ScanInterval = max( ScanInterval, 1 )
+        SamplesPerPacket = max( SamplesPerPacket, 1)
+        SamplesPerPacket = int( SamplesPerPacket )
+        SamplesPerPacket = min ( SamplesPerPacket, 25)
+        command = [ 0 ] * (14 + NumChannels*2)
+        #command[0] = Checksum8
+        command[1] = 0xF8
+        command[2] = NumChannels+4
+        command[3] = 0x11
+        #command[4] = Checksum16 (LSB)
+        #command[5] = Checksum16 (MSB)
+        command[6] = NumChannels
+        command[7] = ResolutionIndex
+        command[8] = SamplesPerPacket
+        #command[9] = Reserved
+        command[10] = SettlingFactor
+        command[11] = (InternalStreamClockFrequency & 1) << 3
+        if DivideClockBy256:
+            command[11] |= 1 << 1
+        t = struct.pack("<H", ScanInterval)
+        command[12] = ord(t[0])
+        command[13] = ord(t[1])
+        for i in range(NumChannels):
+            command[14+(i*2)] = ChannelNumbers[i]
+            command[15+(i*2)] = ChannelOptions[i]
+        self._writeRead(command, 8, [0xF8, 0x01, 0x11])
+        self.streamSamplesPerPacket = SamplesPerPacket
+        self.streamChannelNumbers = ChannelNumbers
+        self.streamChannelOptions = ChannelOptions
+        self.streamConfiged = True
+        if InternalStreamClockFrequency == 1:
+            freq = float(48000000)
+        else:
+            freq = float(4000000)
+        if DivideClockBy256:
+            freq /= 256
+        freq = freq/ScanInterval
+
+        if SamplesPerPacket < 25: #Only happens for ScanFreq < 25, in which case this number is generated as described above
+            self.packetsPerRequest = 1
+        elif SamplesPerPacket == 25: #For all ScanFreq > 25.
+            self.packetsPerRequest = self.findPacketsPerRequest(ScanFrequency, NumChannels)
+            #Such that PacketsPerRequest*SamplesPerPacket % NumChannels == 0, where min P/R is 1 and max 48 for nCh 1-6,8
+            # and max 42 for nCh 7.
+        self.packsPerReq, self.smplsPerPack = self.packetsPerRequest, SamplesPerPacket
+    def findPacketsPerRequest(self,scanFreq,nCh):
+        if nCh == 7:
+            high = 42
+        else:
+            high = 48
+        hold = []
+        for i in range(scanFreq+1):
+            if i%25 == 0 and i%nCh == 0:
+                hold.append(i)
+        hold = np.asarray(hold)
+        hold = min(high,max(hold/25))
+        hold = max(1,hold)
+        return hold
+    def findSamplesPerPacket(self,scanFreq,nCh):
+        hold = []
+        for i in range(scanFreq+1):
+            if i%nCh==0:
+                hold.append(i)
+        return max(hold)
+
+#####
+
+
+
+
+#####
+#Camera Related
+
+
+
+cameraSaveName = ""
+
+
+
+
+
+
+
+
 ####################
 #TIME OUT DECORATORS
 def cdquit(fn_name):

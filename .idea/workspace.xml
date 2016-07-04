@@ -30,13 +30,12 @@
     <splitter split-orientation="horizontal" split-proportion="0.6176013">
       <split-first>
         <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
-          <file leaf-file-name="guitest.py" pinned="false" current-in-tab="true">
+          <file leaf-file-name="guitest.py" pinned="false" current-in-tab="false">
             <entry file="file://$PROJECT_DIR$/guitest.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="255">
-                  <caret line="1383" column="27" selection-start-line="1383" selection-start-column="27" selection-end-line="1383" selection-end-column="27" />
+                <state relative-caret-position="105">
+                  <caret line="7" column="15" selection-start-line="7" selection-start-column="15" selection-end-line="7" selection-end-column="15" />
                   <folding>
-                    <element signature="e#0#13#0" expanded="true" />
                     <element signature="e#618#1206#0" expanded="false" />
                     <element signature="e#1237#2139#0" expanded="false" />
                     <element signature="e#2179#2707#0" expanded="false" />
@@ -80,13 +79,13 @@
               </provider>
             </entry>
           </file>
-          <file leaf-file-name="temp" pinned="false" current-in-tab="false">
+          <file leaf-file-name="temp" pinned="false" current-in-tab="true">
             <entry file="file://$PROJECT_DIR$/temp">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="360">
-                  <caret line="24" column="33" selection-start-line="24" selection-start-column="33" selection-end-line="24" selection-end-column="33" />
+                <state relative-caret-position="180">
+                  <caret line="12" column="39" selection-start-line="12" selection-start-column="39" selection-end-line="12" selection-end-column="39" />
                   <folding>
-                    <marker date="1467638751000" expanded="true" signature="2939:2967" ph="Select an op... " />
+                    <marker date="1467643155000" expanded="true" signature="18811:18839" ph="Select an op... " />
                   </folding>
                 </state>
               </provider>
@@ -99,10 +98,10 @@
           <file leaf-file-name="temp" pinned="false" current-in-tab="true">
             <entry file="file://$PROJECT_DIR$/temp">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="315">
-                  <caret line="21" column="26" selection-start-line="21" selection-start-column="26" selection-end-line="21" selection-end-column="26" />
+                <state relative-caret-position="225">
+                  <caret line="466" column="15" selection-start-line="466" selection-start-column="15" selection-end-line="466" selection-end-column="15" />
                   <folding>
-                    <marker date="1467638751000" expanded="true" signature="2939:2967" ph="Select an op... " />
+                    <marker date="1467643155000" expanded="true" signature="18811:18839" ph="Select an op... " />
                   </folding>
                 </state>
               </provider>
@@ -217,7 +216,7 @@
   <component name="PropertiesComponent">
     <property name="last_opened_file_path" value="$PROJECT_DIR$/guitest.py" />
     <property name="WebServerToolWindowFactoryState" value="false" />
-    <property name="settings.editor.selected.configurable" value="editor.preferences.appearance" />
+    <property name="settings.editor.selected.configurable" value="reference.settingsdialog.IDE.editor.colors.Console Colors" />
     <property name="settings.editor.splitter.proportion" value="0.2" />
   </component>
   <component name="RunManager" selected="Python.guitest">
@@ -491,7 +490,14 @@
       <option name="project" value="LOCAL" />
       <updated>1467638744171</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="k">
+      <created>1467638756063</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1467638756063</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="ToolWindowManager">
@@ -539,7 +545,6 @@
         <state relative-caret-position="0">
           <caret line="0" column="0" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
-            <element signature="e#0#13#0" expanded="true" />
             <element signature="e#618#1206#0" expanded="false" />
             <element signature="e#1237#2139#0" expanded="false" />
             <element signature="e#2179#2707#0" expanded="false" />
@@ -592,10 +597,9 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/guitest.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="255">
-          <caret line="1383" column="27" selection-start-line="1383" selection-start-column="27" selection-end-line="1383" selection-end-column="27" />
+        <state relative-caret-position="105">
+          <caret line="7" column="15" selection-start-line="7" selection-start-column="15" selection-end-line="7" selection-end-column="15" />
           <folding>
-            <element signature="e#0#13#0" expanded="true" />
             <element signature="e#618#1206#0" expanded="false" />
             <element signature="e#1237#2139#0" expanded="false" />
             <element signature="e#2179#2707#0" expanded="false" />
@@ -640,10 +644,10 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/temp">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="315">
-          <caret line="21" column="26" selection-start-line="21" selection-start-column="26" selection-end-line="21" selection-end-column="26" />
+        <state relative-caret-position="180">
+          <caret line="12" column="39" selection-start-line="12" selection-start-column="39" selection-end-line="12" selection-end-column="39" />
           <folding>
-            <marker date="1467638751000" expanded="true" signature="2939:2967" ph="Select an op... " />
+            <marker date="1467643155000" expanded="true" signature="18811:18839" ph="Select an op... " />
           </folding>
         </state>
       </provider>
