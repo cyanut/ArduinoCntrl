@@ -165,9 +165,9 @@ class MasterGUI(object):
         self.master = master
         self.master.title('Fear Control')
         self.master.resizable(width=False, height=False)
-        self.time_label_font = tkFont.Font(family='Helvetica', size=9)
-        self.label_font = tkFont.Font(family='Helvetica', size=11)
-        self.label_font_symbol = tkFont.Font(family='Helvetica', size=10)
+        self.time_label_font = tkFont.Font(family='Arial', size=8)
+        self.label_font = tkFont.Font(family='Arial', size=10)
+        self.label_font_symbol = tkFont.Font(family='Arial', size=9)
         # noinspection PyUnresolvedReferences
         self.balloon = Pmw.Balloon(master)
         self.results_dir_used = {}
@@ -246,9 +246,9 @@ class MasterGUI(object):
         # Secondary Save Frame: New Saves
         new_frame = Tk.LabelFrame(save_frame, text='Create a New Save Location')
         new_frame.pack(fill='both', expand='yes')
-        self.new_save_entry = Tk.Entry(save_frame)
+        self.new_save_entry = Tk.Entry(new_frame)
         self.new_save_entry.pack(side=Tk.TOP)
-        Tk.Button(save_frame,
+        Tk.Button(new_frame,
                   text='Create New',
                   command=lambda:
                   self.save_button_options(new=True)).pack(side=Tk.TOP)
@@ -270,24 +270,16 @@ class MasterGUI(object):
                             'Scan Freq: '
                             '[{}Hz]'.format(channels, freq))
         # Current State Report
-        self.lj_label = Tk.Label(lj_frame, textvariable=self.lj_str_var)
-        self.lj_label.grid(row=0,
-                           column=0,
-                           columnspan=2,
-                           sticky=self.ALL)
+        Tk.Label(lj_frame, textvariable=self.lj_str_var).pack(side=Tk.TOP)
         # Config Button
         self.lj_config_button = Tk.Button(lj_frame,
                                           text='CONFIG',
                                           command=self.lj_config)
-        self.lj_config_button.grid(row=1,
-                                   column=0,
-                                   sticky=self.ALL)
+        self.lj_config_button.pack(side=Tk.LEFT, expand=True)
         self.lj_test_button = Tk.Button(lj_frame,
                                         text='Test LabJack',
                                         command=self.lj_test)
-        self.lj_test_button.grid(row=1,
-                                 column=1,
-                                 sticky=self.ALL)
+        self.lj_test_button.pack(side=Tk.RIGHT, expand=True)
         #########################################
         # Arduino Config
         # Frame
@@ -415,7 +407,8 @@ class MasterGUI(object):
             self.grab_ard_data(destroy=True)
         except ValueError:
             tkMb.showinfo('Error!',
-                          'Time must be entered as integers')
+                          'Time must be entered as integers',
+                          parent=self.master)
 
     def ard_config(self, types):
         """
@@ -789,7 +782,7 @@ class MasterGUI(object):
             self.fp_str_var.set(state)
         elif self.fp_bool.get() == 0:
             self.start_gui_button.config(state=Tk.DISABLED)
-            self.fp_str_var.set('\n[N/A]')
+            self.fp_str_var.set('\n[N/A]\n')
 
     def fp_config(self):
         """
@@ -825,11 +818,13 @@ class MasterGUI(object):
                               'You cannot use an existing '
                               'Save Entry Name; '
                               'select it from the top '
-                              'dialogue instead.')
+                              'dialogue instead.',
+                              parent=self.master)
             elif len(new_save_entry) == 0:
                 tkMb.showinfo('Error!',
                               'Please enter a name '
-                              'for your save directory.')
+                              'for your save directory.',
+                              parent=self.master)
             else:
                 ready = 1
                 menu = self.save_dir_menu.children['menu']
@@ -866,7 +861,8 @@ class MasterGUI(object):
         """
         if len(self.save_dir_list) == 0 and len(self.results_dir_used) == 0 and dirs.settings.save_dir == '':
             tkMb.showinfo('Error!',
-                          'You must first create a directory to save data output.')
+                          'You must first create a directory to save data output.',
+                          parent=self.master)
         else:
             if len(self.results_dir_used) == 0:
                 self.preresults_dir = str(dirs.main_save_dir)+dirs.settings.save_dir+'/'
@@ -896,8 +892,7 @@ class MasterGUI(object):
                             '\nScan Freq: [{}Hz]'.format(channels,
                                                          freq))
 
-    @staticmethod
-    def lj_test():
+    def lj_test(self):
         """
         Checks if LabJack can be successfully connected
         """
@@ -909,7 +904,8 @@ class MasterGUI(object):
                 temp = u6.U6()
                 temp.hardReset()
                 tkMb.showinfo('Success!',
-                              'The LabJack has been properly configured')
+                              'The LabJack has been properly configured',
+                              parent=self.master)
                 break
             except LabJackPython.NullHandleException:
                 try:
@@ -920,7 +916,8 @@ class MasterGUI(object):
                                                 'The LabJack is either unplugged '
                                                 'or is malfunctioning.\n\n'
                                                 'Disconnect and reconnect the device, '
-                                                'then click Retry.')
+                                                'then click Retry.',
+                                                parent=self.master)
                     if retry:
                         time.sleep(3)
                     else:
@@ -1107,10 +1104,12 @@ class PhotometryGUI(GUI):
                            'Main Reference Channel',
                            'Isosbestic Reference Channel']
             temp_report = temp_report[self.ch_num.index(var.get())]
-            tkMb.showinfo('Error!', 'You already selected \n['
-                                    'Channel {}] \n'
-                                    'for \n'
-                                    '[{}]!'.format(var.get(), temp_report))
+            tkMb.showinfo('Error!',
+                          'You already selected \n['
+                          'Channel {}] \n'
+                          'for \n'
+                          '[{}]!'.format(var.get(), temp_report),
+                          parent=self.root)
             self.chk_buttons[ind].set(self.ch_num[ind])
 
     def exit(self):
@@ -1123,12 +1122,17 @@ class PhotometryGUI(GUI):
             true_freq = int(self.main_entry.get().strip())
             isos_freq = int(self.isos_entry.get().strip())
             if true_freq == 0 or isos_freq == 0:
+                print 1
                 tkMb.showinfo('Error!', 'Stimulation Frequencies '
-                                        'must be higher than 0 Hz!')
+                                        'must be higher than 0 Hz!',
+                              parent=self.root)
             elif true_freq == isos_freq:
+                print 2
                 tkMb.showinfo('Error!', 'Main sample and Isosbestic Frequencies '
-                                        'should not be the same value.')
+                                        'should not be the same value.',
+                              parent=self.root)
             else:
+                print 3
                 self.stim_freq = {'main': true_freq,
                                   'isos': isos_freq}
                 self.root.destroy()
@@ -1139,7 +1143,8 @@ class PhotometryGUI(GUI):
                 self.root.quit()
         except ValueError:
             tkMb.showinfo('Error!', 'Stimulation frequencies must be '
-                                    'Integers in Hz.')
+                                    'Integers in Hz.',
+                          parent=self.root)
 
 
 class LabJackGUI(GUI):
@@ -1240,12 +1245,14 @@ class LabJackGUI(GUI):
         if self.n_ch > 8:
             tkMb.showinfo('Error!',
                           'You cannot use more than 8 LabJack '
-                          'Channels at once.')
+                          'Channels at once.',
+                          parent=self.root)
             redo = 1
         elif self.n_ch == 0:
             tkMb.showinfo('Error!',
                           'You must configure at least one '
-                          'Channel.')
+                          'Channel.',
+                          parent=self.root)
             redo = 1
         if redo == 1:
             self.ch_num = temp_ch_num
@@ -1267,7 +1274,8 @@ class LabJackGUI(GUI):
             save_name = self.save_entry.get().strip().lower()
             if len(save_name) == 0:
                 tkMb.showinfo('Error!',
-                              'You must give your Preset a name.')
+                              'You must give your Preset a name.',
+                              parent=self.root)
             elif len(save_name) != 0:
                 if save_name not in dirs.settings.lj_presets:
                     dirs.settings.lj_presets[save_name] = {
@@ -1275,7 +1283,8 @@ class LabJackGUI(GUI):
                         'scan_freq': self.scan_freq
                     }
                     tkMb.showinfo('Saved!', 'Preset saved as '
-                                            '[{}]'.format(save_name))
+                                            '[{}]'.format(save_name),
+                                  parent=self.root)
                     menu = self.preset_menu.children['menu']
                     menu.add_command(label=save_name,
                                      command=lambda name=save_name:
@@ -1284,13 +1293,15 @@ class LabJackGUI(GUI):
                 elif save_name in dirs.settings.lj_presets:
                     if tkMb.askyesno('Overwrite?',
                                      '[{}] already exists.\n'
-                                     'Overwrite this preset?'.format(save_name)):
+                                     'Overwrite this preset?'.format(save_name),
+                                     parent=self.root):
                         dirs.settings.lj_presets[save_name] = {
                             'ch_num': self.ch_num,
                             'scan_freq': self.scan_freq
                         }
                         tkMb.showinfo('Saved!', 'Preset saved as '
-                                                '[{}]'.format(save_name))
+                                                '[{}]'.format(save_name),
+                                      parent=self.root)
 
     def exit(self):
         """
@@ -1316,27 +1327,31 @@ class LabJackGUI(GUI):
         if 1 not in button_state:
             tkMb.showinfo('Error!',
                           'You must pick at least one LabJack '
-                          'Channel to Record from.')
+                          'Channel to Record from.',
+                          parent=self.root)
         else:
             try:
                 self.scan_freq = int(self.scan_entry.get())
                 max_freq = int(50000/self.n_ch)
                 if self.scan_freq == 0:
                     tkMb.showinfo('Error!',
-                                  'Scan Frequency must be higher than 0 Hz.')
+                                  'Scan Frequency must be higher than 0 Hz.',
+                                  parent=self.root)
                 elif self.scan_freq > max_freq:
                     tkMb.showinfo('Error!',
                                   'SCAN FREQUENCY x NUMBER OF CHANNELS \n'
                                   'must be lower than [50,000Hz]\n\n'
                                   'Max [{} Hz] right now with [{}] Channels '
-                                  'in use.'.format(max_freq, self.n_ch))
+                                  'in use.'.format(max_freq, self.n_ch),
+                                  parent=self.root)
                 else:
                     validity = True
                     dirs.settings.lj_last_used['ch_num'] = self.ch_num
                     dirs.settings.lj_last_used['scan_freq'] = self.scan_freq
             except ValueError:
                 tkMb.showinfo('Error!', 'Scan Frequency must be an '
-                                        'Integer in Hz.')
+                                        'Integer in Hz.',
+                              parent=self.root)
         return validity
 
     def list_choose(self, name):
