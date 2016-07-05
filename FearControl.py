@@ -1385,10 +1385,7 @@ class cameraThread(threading.Thread):
         threading.Thread.__init__(self)
 
     def run(self):
-		"""
-
-        """
-		global cameraSaveName, packet, cameraCtx, expName, resultsDir
+        global cameraSaveName, packet, cameraCtx, expName, resultsDir
         cameraSaveName = "[" + expName + "]-" + getDay(3)
         numFrames = (packet[3] / 1000) * 30
         cameraRecord(resultsDir + cameraSaveName, cameraCtx, numFrames)
@@ -1407,7 +1404,7 @@ prgmDir = baseDir + "prgmSettings/"
 saveDir = baseDir + "outputSaves/"
 settings = "enter_new"
 startMarker, endMarker = 60, 62
-timeOffset = 3600 * 4  # EST = -4 hours.
+timeOffset =
 fullscreenMsg = ""
 num_loops, reset, mainLoopbrk = 0, 0, 0
 prevTimeStart, prevTimeStartRead = datetime.now(), datetime.now()

@@ -35,6 +35,7 @@ import Pmw
 # Global Variables
 NUM_LJ_CH = 14
 SAVE_ON_EXIT = True
+TIME_OFFSET = 3600*4  # EST = -4 hours.
 
 
 # Misc. Functions
@@ -213,6 +214,7 @@ class MasterGUI(object):
         self.ttl_time = dirs.settings.ard_last_used['packet'][3]
         self.ard_ser = None
         self.ard_new_serial = True
+        self.master.protocol('WM_DELETE_WINDOW', self.hard_exit)
         #########################################
         # Give each setup GUI its own box
         #########################################
@@ -250,7 +252,8 @@ class MasterGUI(object):
                                    text='Data Output Save Location',
                                    width=self.single_widget_dim*2,
                                    height=self.single_widget_dim,
-                                   highlightthickness=5)
+                                   highlightthickness=5,
+                                   highlightcolor='white')
         save_frame.grid(row=1, column=0,
                         columnspan=1,
                         sticky=self.ALL)
@@ -427,19 +430,18 @@ class MasterGUI(object):
         self.pwm_setup.grid(row=6, column=0, sticky=self.ALL)
         # Status messages for arduino serial communication
         self.ard_status = Tk.StringVar()
+        Tk.Label(ard_frame, anchor=Tk.E, text='Arduino Status:  ').grid(row=4,
+                                                                        column=10,
+                                                                        columnspan=15,
+                                                                        sticky=self.ALL)
         Tk.Label(ard_frame, anchor=Tk.W,
                  textvariable=self.ard_status,
                  relief=Tk.SUNKEN).grid(row=4,
-                                        column=10, columnspan=85,
+                                        column=25, columnspan=70,
                                         sticky=self.ALL)
-        self.ard_status.set('Arduino Status: null')
+        self.ard_status.set('null')
         # Update Window
         self.gui_update_window()
-        self.ard_ser = ArduinoComm(self.ard_status)
-        if not self.ard_ser.run():
-            self.ard_serial_toplevel()
-        else:
-            print 'done'
 
     # General GUI Functions
     def gui_canvas_init(self):
@@ -543,6 +545,18 @@ class MasterGUI(object):
         self.master.geometry('{}x{}+{}+{}'.format(window_width,
                                                   window_height,
                                                   x_pos, y_pos))
+
+    def hard_exit(self, allow=True):
+        """
+        Handles threads first before exiting for a clean close
+        """
+        if allow:
+            self.master.destroy()
+            self.master.quit()
+        else:
+            tkMb.showwarning('Error!',
+                             'Please STOP the experiment first.',
+                             parent=self.master)
 
     # Arduino Functions
     def ard_config(self, types):
@@ -848,32 +862,6 @@ class MasterGUI(object):
                                  i[on]])
         return ard_data
 
-    def ard_serial_toplevel(self):
-        """
-        Opens a top level dialogue
-        listing available serial ports to pick from
-        """
-        serial_ports = list_serial_ports()
-        window = Tk.Toplevel(self.master)
-        top_frame = Tk.Frame(window)
-        top_frame.grid(row=0, sticky=self.ALL)
-        bottom_frame = Tk.Frame(window)
-        bottom_frame.grid(row=1, sticky=self.ALL)
-        self.port_chosen = Tk.StringVar()
-        self.port_chosen.set(' '*60)
-        Tk.OptionMenu(top_frame, self.port_chosen,
-                      *serial_ports,
-                      command=lambda port:
-                      self.start_serial(port)).pack()
-        window.mainloop()
-
-    def start_serial(self, port):
-        """
-        TEMP CHANGE
-        """
-        self.ard_ser.load(port)
-        self.ard_ser.start()
-
     # Save Functions
     def save_grab_list(self):
         """
@@ -1011,11 +999,31 @@ class MasterGUI(object):
         """
         Check if valid settings, make directories, and start progress bar
         """
+        self.ard_ser = ArduinoComm(self.ard_status)
         if len(self.save_dir_list) == 0 and len(self.results_dir_used) == 0 and dirs.settings.save_dir == '':
             tkMb.showinfo('Error!',
                           'You must first create a directory to save data output.',
                           parent=self.master)
-        else:
+            return None
+        # Disable non-essential buttons to avoid errors between modules
+        self.run_bulk_toggle(running=True)
+        # Start serial thread
+        self.ard_ser.start()
+        # Start Prog thread
+        threading.Thread(target=self.progbar_thread).start()
+
+    def progbar_thread(self):
+        """
+        Main progressbar
+        components in a separate thread
+        so GUI doesn't get locked up
+        """
+        # Wait for arduino to connect to serial (or not)
+        while self.ard_ser.connected == 'none':
+            time.sleep(0.01)
+        # If we connect...
+        if self.ard_ser.connected:
+            # 1. Make sure there is somewhere to save our file outputs
             if len(self.results_dir_used) == 0:
                 self.preresults_dir = str(dirs.main_save_dir)+dirs.settings.save_dir+'/'
                 dirs.results_dir = self.preresults_dir+'{} at [{}]/'.format(get_day(2),
@@ -1030,12 +1038,34 @@ class MasterGUI(object):
                 self.results_dir_used[self.preresults_dir] = dirs.results_dir
                 self.make_save_dir = 0
                 self.save_grab_list()
-            # Turn all buttons off and turn on STOP button
-            # Saves a lot of headache with coding in conditions otherwise
-            self.run_bulk_toggle(running=True)
-            self.progbar.start()
-            # Finished. Turn buttons back on
-            self.run_bulk_toggle(running=False)
+            # 2. Pack up and send over data to the arduino
+            system_time = ["<L", calendar.timegm(time.gmtime()) - TIME_OFFSET]
+            pwm_pack_send = []
+            for i in dirs.settings.ard_last_used['pwm_pack']:
+                period = (float(1000000)/float(i[4]))
+                cycleTimeOn = long(round(period*(float(i[7])/float(100))))
+                cycleTimeOff = long(round(period*(float(1)-(float(i[7])/float(100)))))
+                timePhaseShift = long(round(period*(float(i[6])/float(360))))
+                pwm_pack_send.append(["<LLLLLBL",
+                                      0, i[2], i[3],
+                                      cycleTimeOn, cycleTimeOff,
+                                      i[5], timePhaseShift])
+            try:
+                self.ard_ser.send_packets([system_time],
+                                          [dirs.settings.ard_last_used['packet']],
+                                          dirs.settings.ard_last_used['tone_pack'],
+                                          dirs.settings.ard_last_used['out_pack'],
+                                          pwm_pack_send)
+                time.sleep(0.5)
+                self.ard_ser.send_to_ard(pack("<B", 1))
+            except serial.serialutil.SerialException:
+                print 'nope'
+            # 3. Start the GUI Prog Bar
+            message = self.progbar.start()
+            if message == 'finished':
+                self.ard_ser.reset('Procedure successful.')
+        # Finished. Turn buttons back on
+        self.run_bulk_toggle(running=False)
 
     def progbar_stop(self):
         """
@@ -1043,6 +1073,10 @@ class MasterGUI(object):
         """
         self.progbar.stop()
         self.run_bulk_toggle(running=False)
+        try:
+            self.ard_ser.reset('Procedure terminated.')
+        except AttributeError:
+            pass
 
     # Experiment Run Functions
     def run_bulk_toggle(self, running):
@@ -1051,6 +1085,8 @@ class MasterGUI(object):
          or disabled based on running state
         """
         if running:
+            self.master.protocol('WM_DELETE_WINDOW',
+                                 lambda: self.hard_exit(allow=False))
             self.prog_off.config(state=Tk.NORMAL)
             self.prog_on.config(state=Tk.DISABLED)
             self.fp_checkbutton.config(state=Tk.DISABLED)
@@ -1070,6 +1106,8 @@ class MasterGUI(object):
             self.out_setup.config(state=Tk.DISABLED)
             self.pwm_setup.config(state=Tk.DISABLED)
         if not running:
+            self.master.protocol('WM_DELETE_WINDOW',
+                                 self.hard_exit)
             self.prog_off.config(state=Tk.DISABLED)
             self.prog_on.config(state=Tk.NORMAL)
             self.fp_checkbutton.config(state=Tk.NORMAL)
@@ -2152,27 +2190,6 @@ class ProgressBar(threading.Thread):
         self.num_prog, self.num_time = 1, 1
         self.time_diff = 0
 
-    def advance(self):
-        """
-        Moves the progress bar
-        """
-        while self.running:
-            now = datetime.now()
-            self.time_diff = (now-self.start_prog).seconds+float((now-self.start_prog).microseconds)/1000000
-            if self.time_diff/self.num_time >= 0.005:
-                self.canvas.itemconfig(self.time_gfx,
-                                       text='{}'.format(min_from_sec(self.time_diff, True)))
-                self.num_time += 1
-            if self.time_diff/self.num_prog >= self.segment_size:
-                self.canvas.move(self.bar, 1, 0)
-                if (self.num_prog > 35) and (self.num_prog < 965):
-                    self.canvas.move(self.time_gfx, 1, 0)
-                self.num_prog += 1
-            self.canvas.update()
-            time.sleep(0.005)
-            if self.num_prog > 1000 or self.time_diff > float(self.ms_total_time/1000):
-                self.running = False
-
     def start(self):
         """
         Starts the progress bar
@@ -2185,7 +2202,23 @@ class ProgressBar(threading.Thread):
             self.num_prog, self.num_time = 1, 1
         self.start_prog = datetime.now()
         self.running = True
-        self.advance()
+        while self.running:
+            now = datetime.now()
+            self.time_diff = (now - self.start_prog).seconds + float((now - self.start_prog).microseconds) / 1000000
+            if self.time_diff / self.num_time >= 0.005:
+                self.canvas.itemconfig(self.time_gfx,
+                                       text='{}'.format(min_from_sec(self.time_diff, True)))
+                self.num_time += 1
+            if self.time_diff / self.num_prog >= self.segment_size:
+                self.canvas.move(self.bar, 1, 0)
+                if (self.num_prog > 35) and (self.num_prog < 965):
+                    self.canvas.move(self.time_gfx, 1, 0)
+                self.num_prog += 1
+            self.canvas.update()
+            time.sleep(0.005)
+            if self.num_prog > 1000 or self.time_diff > float(self.ms_total_time / 1000):
+                self.running = False
+                return 'finished'
 
     def stop(self):
         """
@@ -2208,14 +2241,7 @@ class ArduinoComm(threading.Thread):
         self.start_marker, self.end_marker = 60, 62
         self.serial = None
         self.status_var = status_var
-        self.ard_new_serial = True
-        self.port = False
-
-    def serial_connect(self):
-        """
-        Attempts to open ser_port
-        """
-        self.serial = serial.Serial(self.ser_port, self.baudrate)
+        self.connected = True
 
     def send_to_ard(self, send_str):
         """
@@ -2252,86 +2278,81 @@ class ArduinoComm(threading.Thread):
                     if get_str == 'M':
                         self.send_to_ard(pack(*each[i]))
 
+    def run(self):
+        """
+        Tries every possible serial port
+        """
+        self.connected = 'none'
+        ports = list_serial_ports()
+        self.status_var.set('Attempting Port '
+                            '[{}]...'.format(self.ser_port))
+        time.sleep(1)
+        connected = self.try_serial(self.ser_port)
+        if connected:
+            self.status_var.set('Successfully Connected to Port '
+                                '[{}]!'.format(self.ser_port))
+            self.connected = True
+            return
+        elif not connected:
+            for port in ports:
+                self.status_var.set('Failed. Attempting next Port '
+                                    '[{}]...'.format(port))
+                if self.try_serial(port):
+                    self.ser_port = port
+                    dirs.settings.ser_port = port
+                    self.status_var.set('Successfully Connected to Port '
+                                        '[{}]!'.format(port))
+                    self.connected = True
+                    return
+            self.status_var.set('Failed to Connect to Arduino! '
+                                'Please make sure the device is plugged in.')
+            self.connected = False
+            return
+
     def wait_for(self):
         """
         Wait for ready message from arduino
         """
         msg = ''
-        i = 0
         start = datetime.now()
-        time_diff = 0
         while msg.find('Arduino is ready') == -1:
             while self.serial.inWaiting() == 0:
                 time.sleep(0.1)
-                if (i+1) % 10 == 0 and ((i+1) < 30 or (i+1) > 60):
-                    self.status_var.set('Arduino Status: '
-                                        'Waiting...')
-                if i+1 == 30:
-                    self.status_var.set('Arduino Status: '
-                                        'Taking longer than usual '
-                                        'to connect...')
-                i += 1
                 time_diff = get_time_diff(start)
-                print time_diff
-                if time_diff > 10000:
+                if time_diff > 3000:
                     return False
             msg = self.get_from_ard()
         if msg == 'Arduino is ready':
-            self.status_var.set('Arduino Status: '
-                                'Connection Established! '
-                                'Sending data packets...')
-        else:
-            self.status_var.set('FAILEDFAILEDFAILED')
+            return True
 
-    def load(self, port):
+    def try_serial(self, port):
         """
-        TEMP CHANGE
+        Given a port, attempts to connect to it
         """
-        self.port = port
-
-    def run(self):
-        """
-        Tests for arduino over serial and connects if possible
-        """
-        if self.port is not False:
-            self.ser_port = self.port
         try:
-            if self.ard_new_serial:
-                self.serial_connect()
-            elif not self.ard_new_serial:
-                self.serial.setDTR(False)
-                time.sleep(0.03)
-                self.serial.setDTR(True)
-            self.status_var.set('Arduino Status: '
-                                'Opened Port [{}] '
-                                'with Baudrate [{}]'.format(self.ser_port,
-                                                            self.baudrate))
+            self.serial = serial.Serial(port, self.baudrate)
             try:
-                time.sleep(0.5)
-                wait = self.wait_for()
-                if self.port is not False and not wait:
-                    dirs.settings.ser_port = self.port
-                return True
+                success = self.wait_for()
+                if success:
+                    dirs.settings.ser_port = port
+                    return True
+                else:
+                    return False
             except IOError:
-                self.status_var.set('Arduino Status: '
-                                    'Serial Port [{}] '
-                                    'is either occupied '
-                                    'or cannot be '
-                                    'opened.'.format(self.ser_port))
-                return False
-            except KeyboardInterrupt:
-                self.status_var.set('Arduino Status: '
-                                    'Taking too long to respond. '
-                                    'Serial Port has been RESET.')
-                self.ser_port = 'RESET'
                 return False
         except (serial.SerialException, IOError):
-            self.status_var.set('Arduino Status: '
-                                'Serial Port [{}] '
-                                'is either occupied '
-                                'or cannot be '
-                                'opened.'.format(dirs.settings.ser_port))
             return False
+
+    def reset(self, message=False):
+        """
+        Resets serial connection
+        Useful for flushing
+        """
+        self.serial.setDTR(False)
+        time.sleep(0.022)
+        self.serial.setDTR(True)
+        if message is not False:
+            self.status_var.set(message)
 
 
 #################################################################
