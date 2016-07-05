@@ -459,29 +459,30 @@ class MasterGUI(object):
         config_run.run()
         # Now we load these settings
         # back into settings.ard_last_used
-        data = config_run.return_data
-        if config_run.types == 'tone':
-            dirs.settings.ard_last_used['packet'][4] = len(data)
-            dirs.settings.ard_last_used['tone_pack'] = []
-            for i in data:
-                dirs.settings.ard_last_used['tone_pack'].append(["<LLH"] + i)
-            dirs.settings.ard_last_used['tone_pack'] = sorted(dirs.settings.ard_last_used['tone_pack'],
-                                                              key=itemgetter(1))
-        if config_run.types == 'output':
-            dirs.settings.ard_last_used['packet'][5] = len(data)
-            dirs.settings.ard_last_used['out_pack'] = []
-            for i in data:
-                dirs.settings.ard_last_used['out_pack'].append(["<LB", i, data[i]])
-            dirs.settings.ard_last_used['out_pack'] = sorted(dirs.settings.ard_last_used['out_pack'],
-                                                             key=itemgetter(1))
-        if config_run.types == 'pwm':
-            dirs.settings.ard_last_used['packet'][6] = len(data)
-            dirs.settings.ard_last_used['pwm_pack'] = []
-            for i in data:
-                dirs.settings.ard_last_used['pwm_pack'].append(["<LLLfBBf"] + i)
-            dirs.settings.ard_last_used['pwm_pack'] = sorted(dirs.settings.ard_last_used['pwm_pack'],
-                                                             key=itemgetter(2))
-        self.grab_ard_data(destroy=True)
+        if not config_run.hard_stop:
+            data = config_run.return_data
+            if config_run.types == 'tone':
+                dirs.settings.ard_last_used['packet'][4] = len(data)
+                dirs.settings.ard_last_used['tone_pack'] = []
+                for i in data:
+                    dirs.settings.ard_last_used['tone_pack'].append(["<LLH"] + i)
+                dirs.settings.ard_last_used['tone_pack'] = sorted(dirs.settings.ard_last_used['tone_pack'],
+                                                                  key=itemgetter(1))
+            if config_run.types == 'output':
+                dirs.settings.ard_last_used['packet'][5] = len(data)
+                dirs.settings.ard_last_used['out_pack'] = []
+                for i in data:
+                    dirs.settings.ard_last_used['out_pack'].append(["<LB", i, data[i]])
+                dirs.settings.ard_last_used['out_pack'] = sorted(dirs.settings.ard_last_used['out_pack'],
+                                                                 key=itemgetter(1))
+            if config_run.types == 'pwm':
+                dirs.settings.ard_last_used['packet'][6] = len(data)
+                dirs.settings.ard_last_used['pwm_pack'] = []
+                for i in data:
+                    dirs.settings.ard_last_used['pwm_pack'].append(["<LLLfBBf"] + i)
+                dirs.settings.ard_last_used['pwm_pack'] = sorted(dirs.settings.ard_last_used['pwm_pack'],
+                                                                 key=itemgetter(2))
+            self.grab_ard_data(destroy=True)
 
     def update_ard_preset_list(self):
         """
@@ -1036,6 +1037,18 @@ class GUI(object):
         self.root.title(self.title)
         self.root.resizable(width=False, height=False)
         self.ALL = Tk.N+Tk.E+Tk.S+Tk.W
+        self.hard_stop = False
+        self.root.protocol('WM_DELETE_WINDOW', self.hard_exit)
+
+    def hard_exit(self):
+        """
+        Destroy all instances of the window
+        if close button is pressed
+        Prevents ID errors and clashes
+        """
+        self.hard_stop = True
+        self.root.destroy()
+        self.root.quit()
 
     def center(self):
         """
