@@ -180,6 +180,8 @@ def dict_flatten(*args):
 
 #################################################################
 # GUIs
+
+
 # noinspection PyAttributeOutsideInit
 class MasterGUI(object):
     """
@@ -320,7 +322,7 @@ class MasterGUI(object):
                        sticky=self.ALL)
         Tk.Label(ard_frame,
                  text='Last used settings shown. '
-                      'Rollover individual segments for '
+                      'Click then rollover individual segments for '
                       'specific stimuli config information.',
                  relief=Tk.RAISED).grid(row=0,
                                         columnspan=80,
@@ -455,6 +457,31 @@ class MasterGUI(object):
         elif types == 'pwm':
             config_run.pwm_setup()
         config_run.run()
+        # Now we load these settings
+        # back into settings.ard_last_used
+        data = config_run.return_data
+        if config_run.types == 'tone':
+            dirs.settings.ard_last_used['packet'][4] = len(data)
+            dirs.settings.ard_last_used['tone_pack'] = []
+            for i in data:
+                dirs.settings.ard_last_used['tone_pack'].append(["<LLH"] + i)
+            dirs.settings.ard_last_used['tone_pack'] = sorted(dirs.settings.ard_last_used['tone_pack'],
+                                                              key=itemgetter(1))
+        if config_run.types == 'output':
+            dirs.settings.ard_last_used['packet'][5] = len(data)
+            dirs.settings.ard_last_used['out_pack'] = []
+            for i in data:
+                dirs.settings.ard_last_used['out_pack'].append(["<LB", i, data[i]])
+            dirs.settings.ard_last_used['out_pack'] = sorted(dirs.settings.ard_last_used['out_pack'],
+                                                             key=itemgetter(1))
+        if config_run.types == 'pwm':
+            dirs.settings.ard_last_used['packet'][6] = len(data)
+            dirs.settings.ard_last_used['pwm_pack'] = []
+            for i in data:
+                dirs.settings.ard_last_used['pwm_pack'].append(["<LLLfBBf"] + i)
+            dirs.settings.ard_last_used['pwm_pack'] = sorted(dirs.settings.ard_last_used['pwm_pack'],
+                                                             key=itemgetter(2))
+        self.grab_ard_data(destroy=True)
 
     def update_ard_preset_list(self):
         """
@@ -646,8 +673,7 @@ class MasterGUI(object):
                 self.tone_bars[i] = self.ard_canvas.create_rectangle(self.tone_data[i][0],
                                                                      0+15,
                                                                      self.tone_data[i][1]+self.tone_data[i][0],
-                                                                     35, fill='yellow',
-                                                                     outline='white')
+                                                                     35, fill='yellow', outline='blue')
                 self.balloon.tagbind(self.ard_canvas,
                                      self.tone_bars[i],
                                      '{} - {}\n{} Hz'.format(
@@ -668,8 +694,7 @@ class MasterGUI(object):
                                                                     y_pos,
                                                                     self.out_data[i][1]+self.out_data[i][0],
                                                                     y_pos+20,
-                                                                    fill='yellow',
-                                                                    outline='white')
+                                                                    fill='yellow', outline='blue')
                 self.balloon.tagbind(self.ard_canvas,
                                      self.out_bars[i],
                                      '{} - {}\nPin {}'.format(
@@ -690,7 +715,7 @@ class MasterGUI(object):
                                                                     y_pos,
                                                                     self.pwm_data[i][1]+self.pwm_data[i][0],
                                                                     y_pos+20,
-                                                                    fill='yellow', outline='white')
+                                                                    fill='yellow', outline='blue')
                 self.balloon.tagbind(self.ard_canvas,
                                      self.pwm_bars[i],
                                      ('{} - {}\n'
@@ -921,8 +946,7 @@ class MasterGUI(object):
         config_run.run()
         channels, freq = dirs.settings.quick_lj()
         self.lj_str_var.set('Channels:\n{}\n'
-                            '\nScan Freq: [{}Hz]'.format(channels,
-                                                         freq))
+                            '\nScan Freq: [{}Hz]'.format(channels, freq))
 
     def lj_test(self):
         """
@@ -1414,13 +1438,14 @@ class LabJackGUI(GUI):
         self.scan_entry.insert(Tk.END, self.scan_freq)
 
 
-# noinspection PyAttributeOutsideInit
+# noinspection PyAttributeOutsideInit,PyUnresolvedReferences,PyTypeChecker,PyStatementEffect,PyUnboundLocalVariable
 class ArduinoGUI(GUI):
     """
     Arduino GUI Configuration
     """
     def __init__(self, master):
         self.root = master
+        self.close_gui = False
         self.title = 'n/a'
         GUI.__init__(self, master)
         self.baudrate = 115200
@@ -1432,36 +1457,35 @@ class ArduinoGUI(GUI):
         [self.packet, self.tone_pack,
          self.out_pack, self.pwm_pack] = dirs.settings.quick_ard()
         self.max_time = 0
-        self.raw_data = {}
-        for i in range(2, 14):
-            self.raw_data[i] = {}
+        self.data = {'starts': {}, 'middles': {}, 'ends': {}, 'hold': {}}
+        self.types = None
+        self.return_data = []
 
-    # noinspection PyTypeChecker,PyStatementEffect,PyUnboundLocalVariable
-    def entry_validate(self, types, pins=False, rows=None):
+    def entry_validate(self, pins=False, rows=None):
         """
         Checks inputs are valid and exits
         """
-        # We MUST return either True or False
-        # Setup row and pin Identity of target entry
-        pin = None
+        entry, err_place_msg, arg_types = None, '', []
         row = int(rows)
+        pin = None
+        action = self.close_gui
+        if self.close_gui:
+            self.close_gui = False
         if pins:
             pin = int(pins)
-        # Setup parameters for each type of incoming input
-        entry, err_place_msg, arg_types = None, '', []
         pin_ids = 0
-        if types == 'tone':
+        if self.types == 'tone':
             pin_ids = 10
             entry = self.entries[row]
             arg_types = ['Time On (s)', 'Time until Off (s)', 'Frequency (Hz)']
             err_place_msg = 'row [{:0>2}]'.format(row+1)
-        elif types == 'output':
+        elif self.types == 'output':
             pin_ids = range(2, 8)
             pin_ids = pin_ids[pin]
             entry = self.entries[pin][row]
             arg_types = ['Time On (s)', 'Time until Off (s)']
             err_place_msg = 'row [{:0>2}], pin [{:0>2}]'.format(row+1, pin_ids)
-        elif types == 'pwm':
+        elif self.types == 'pwm':
             pin_ids = range(8, 14)
             pin_ids.remove(10)
             pin_ids = pin_ids[pin]
@@ -1498,19 +1522,24 @@ class ArduinoGUI(GUI):
                           'Comma separated in this order:\n\n'
                           '[{}]'.format(err_place_msg, num_args, error_str),
                           parent=self.root)
+            entry.focus()
             return False
         # 2b. Exactly 0
         if len(inputs) == 0:
+            if action:
+                self.close()
             return False
         # 3. Check input content are valid
         try:
             on, off = int(inputs[0]), int(inputs[1])
             on_ms, off_ms = on*1000, off*1000
             refr, freq, phase, duty_cycle = [], 0, 0, 0
-            if types == 'tone':
+            if self.types == 'tone':
                 freq = int(inputs[2])
                 refr = freq
-            elif types == 'pwm':
+            elif self.types == 'output':
+                refr = pin_ids
+            elif self.types == 'pwm':
                 freq = int(inputs[2])
                 duty_cycle = int(inputs[3])
                 phase = int(inputs[4])
@@ -1526,9 +1555,10 @@ class ArduinoGUI(GUI):
                               'Time until On) '
                               'cannot be 0s!'.format(err_place_msg),
                               parent=self.root)
+                entry.focus()
                 return False
             # 3c. Type specific checks
-            if types == 'tone':
+            if self.types == 'tone':
                 if freq < 50:
                     tkMb.showinfo('Error!',
                                   'Error in {}:\n\n'
@@ -1536,16 +1566,18 @@ class ArduinoGUI(GUI):
                                   'best for high frequencies.\n\n'
                                   'Use the PWM function '
                                   'instead for low Hz '
-                                  'frequency modulation',
+                                  'frequency modulation'.format(err_place_msg),
                                   parent=self.root)
+                    entry.focus()
                     return False
-            if types == 'pwm':
+            if self.types == 'pwm':
                 if phase not in range(361):
                     tkMb.showinfo('Error!',
                                   'Error in {}:\n\n'
                                   'Phase Shift must be an integer\n'
                                   'between 0 and 360 degrees.'.format(err_place_msg),
                                   parent=self.root)
+                    entry.focus()
                     return False
                 if duty_cycle not in range(1, 100):
                     tkMb.showinfo('Error!',
@@ -1555,6 +1587,7 @@ class ArduinoGUI(GUI):
                                   'percentage between '
                                   '1 and 99 inclusive.'.format(err_place_msg),
                                   parent=self.root)
+                    entry.focus()
                     return False
                 if freq > 100:
                     tkMb.showinfo('Error!',
@@ -1564,6 +1597,7 @@ class ArduinoGUI(GUI):
                                   'Use the TONE function or an'
                                   'external wave '
                                   'generator instead.'.format(err_place_msg))
+                    entry.focus()
                     return False
         except ValueError:
             tkMb.showinfo('Error!',
@@ -1572,37 +1606,178 @@ class ArduinoGUI(GUI):
                           'must be comma '
                           'separated integers'.format(err_place_msg),
                           parent=self.root)
+            entry.focus()
             return False
         # 4. Check if any time intervals overlap
         #       Rules:
-        #       - Time intervals cannot overlap for the same pin at different [refr] values
-        #       - Time intervals overlapping at the same [refr] will be combined
+        #       - Time intervals cannot overlap for the same pin
+        #       - Time intervals next to each other
+        #         at the same [refr] will be joined into a single segment
+        #         to save space on arduino
         #       Therefore:
         #       - OUTPUT Pins can always overlap. We just need to combine the time inputs
         #       - PWM Pins can overlap iff same [refr]; else raise error
         #       - Tone is one pin only. Only overlap if same [freq]
+        if self.types == 'pwm':
+            pin_int = pin_to_int(pin_ids)
+            (starts_l, middles_l, ends_l, hold_l) = (self.data['starts'],
+                                                     self.data['middles'],
+                                                     self.data['ends'],
+                                                     self.data['hold'])
+            try:
+                starts_l[pin_ids], middles_l[pin_ids], ends_l[pin_ids], hold_l[pin_int]
+            except KeyError:
+                (starts_l[pin_ids], middles_l[pin_ids],
+                 ends_l[pin_ids], hold_l[pin_int]) = {}, {}, {}, {}
+            (self.data['starts'], self.data['middles'],
+             self.data['ends'], self.data['hold']) = (starts_l[pin_ids], middles_l[pin_ids],
+                                                      ends_l[pin_ids], hold_l[pin_int])
         try:
+            self.data['starts'][refr], self.data['middles'][refr], self.data['ends'][refr]
+        except KeyError:
+            self.data['starts'][refr], self.data['middles'][refr], self.data['ends'][refr] = [], [], []
+        if self.types in ['tone', 'pwm']:
+            try:
+                self.data['hold'][refr]
+            except KeyError:
+                self.data['hold'][refr] = []
+            (starts_all,
+             middles_all,
+             ends_all) = dict_flatten(self.data['starts'],
+                                      self.data['middles'],
+                                      self.data['ends'])
+        elif self.types == 'output':
+            (starts_all,
+             middles_all,
+             ends_all) = (self.data['starts'][pin_ids],
+                          self.data['middles'][pin_ids],
+                          self.data['ends'][pin_ids])
+        if on in starts_all or on + off in ends_all or on in middles_all or on + off in middles_all:
+            tkMb.showinfo('Error!', 'Error in {}:\n\n'
+                                    'Time intervals '
+                                    'should not overlap for the same '
+                                    'pin!'.format(err_place_msg))
+            entry.focus()
+            return False
+        # 4a. We've finished checking for validity.
+        #     If the input reached this far, it's ready to be added
+        self.data['middles'][refr] += range(on+1, on+off)
+        front, back = 0, 0
+        self.time_combine(on_ms, off_ms, front, back, refr)
+        if on in self.data['ends'][refr] and on+off not in self.data['starts'][refr]:
+            front, back = 1, 0
+            self.data['middles'][refr].append(on)
+            self.data['ends'][refr].remove(on)
+            self.data['ends'][refr].append(on+off)
+            self.time_combine(on_ms, off_ms, front, back, refr)
+        elif on not in self.data['ends'][refr] and on+off in self.data['starts'][refr]:
+            front, back = 0, 1
+            self.data['middles'][refr].append(on+off)
+            self.data['starts'][refr].remove(on+off)
+            self.data['starts'][refr].append(on)
+            self.time_combine(on_ms, off_ms, front, back, refr)
+        elif on in self.data['ends'][refr] and on+off in self.data['starts'][refr]:
+            front, back = 1, 1
+            self.data['middles'][refr].append(on)
+            self.data['middles'][refr].append(on+off)
+            self.data['starts'][refr].remove(on+off)
+            self.data['ends'][refr].remove(on)
+            self.time_combine(on_ms, off_ms, front, back, refr)
+        else:
+            self.data['starts'][refr].append(on)
+            self.data['ends'][refr].append(on+off)
+        if self.types == 'pwm':
+            (self.data['starts'],
+             self.data['middles'],
+             self.data['ends'],
+             self.data['hold']) = (starts_l, middles_l, ends_l, hold_l)
+        # If all is well and we requested a close, we close the GUI
+        if action:
+            self.close()
+        else:
+            return True
 
-        return True
+    def time_combine(self, on_ms, off_ms, front, back, refr):
+        """
+        Looks for combinable time intervals and joins
+        them into a single instruction
+        """
+        if self.types in ['pwm', 'tone']:
+            if front == 0 and back == 0:
+                self.data['hold'][refr].append(on_ms)
+                self.data['hold'][refr].append(on_ms+off_ms)
+            if front == 1:
+                self.data['hold'][refr].remove(on_ms)
+                self.data['hold'][refr].remove(on_ms)
+            if back == 1:
+                self.data['hold'][refr].remove(on_ms+off_ms)
+                self.data['hold'][refr].remove(on_ms + off_ms)
+        elif self.types == 'output':
+            pin_int = pin_to_int(refr)
+            if front == 0 and back == 0:
+                if on_ms not in self.data['hold']:
+                    self.data['hold'][on_ms] = pin_int
+                elif on_ms in self.data['hold']:
+                    self.data['hold'][on_ms] += pin_int
+                if on_ms+off_ms not in self.data['hold']:
+                    self.data['hold'][on_ms+off_ms] = pin_int
+                elif on_ms+off_ms in self.data['hold']:
+                    self.data['hold'][on_ms+off_ms] += pin_int
+            if front == 1:
+                if self.data['hold'][on_ms] == (2*pin_int):
+                    self.data['hold'].pop(on_ms)
+                else:
+                    self.data['hold'][on_ms] -= (2*pin_int)
+            if back == 1:
+                if self.data['hold'][on_ms+off_ms] == (2*pin_int):
+                    self.data['hold'].pop(on_ms+off_ms)
+                else:
+                    self.data['hold'][on_ms+off] -= (2*pin_int)
 
     def close(self):
         """
-        Exits the GUI
+        Exits GUI
         """
-        # use close to get last batch of data (since updates only happen
-        # with focus off otherwise)
-        # best method: scan all full fields and match with save list
-        # then index it and run entry validate
+        # If we configured a max time higher than what it was before, update
         if self.max_time > dirs.settings.ard_last_used['packet'][3]:
             dirs.settings.ard_last_used['packet'][3] = self.max_time
             main.ttl_time = self.max_time
             main.grab_ard_data(destroy=True)
-            mins = min_from_sec(self.max_time/1000, option='min')
-            secs = min_from_sec(self.max_time/1000, option='sec')
+            mins = min_from_sec(self.max_time / 1000, option='min')
+            secs = min_from_sec(self.max_time / 1000, option='sec')
             main.min_entry.delete(0, Tk.END)
             main.min_entry.insert(Tk.END, '{:0>2}'.format(mins))
             main.sec_entry.delete(0, Tk.END)
             main.sec_entry.insert(Tk.END, '{:0>2}'.format(secs))
+        # Retrieve data that we saved up and load into MasterGUI
+        self.return_data = []
+        if self.types == 'output':
+            self.return_data = self.data['hold']
+        elif self.types == 'tone':
+            for freq in self.data['hold']:
+                self.data['hold'][freq] = sorted(self.data['hold'][freq])
+                for i in range(len(self.data['hold'][freq])):
+                    if i % 2 == 0:
+                        self.return_data.append([self.data['hold'][freq][i],
+                                                 self.data['hold'][freq][i+1],
+                                                 freq])
+        elif self.types == 'pwm':
+            for pin_int in self.data['hold']:
+                for refr in self.data['hold'][pin_int]:
+                    refr_i = str(refr)
+                    freq_i, duty_i, phase_i = (int(refr_i[:-10]),
+                                               int(refr_i[-10:-5]),
+                                               int(refr_i[-5:]))
+                    self.data['hold'][pin_int][refr] = sorted(self.data['hold'][pin_int][refr])
+                    for i in range(len(self.data['hold'][pin_int][refr])):
+                        if i % 2 == 0:
+                            self.return_data.append([0,
+                                                     self.data['hold'][pin_int][refr][i],
+                                                     self.data['hold'][pin_int][refr][i+1],
+                                                     freq_i,
+                                                     pin_int,
+                                                     phase_i,
+                                                     duty_i])
         self.root.destroy()
         self.root.quit()
 
@@ -1635,6 +1810,25 @@ class ArduinoGUI(GUI):
                 for entry in range(self.num_entries):
                     self.entries[ind][entry].configure(state=Tk.NORMAL)
 
+    def pre_close(self):
+        """
+        Forces focus on button to do final validation check
+        """
+        focus_is_entry = False
+        current_focus = self.root.focus_get()
+        if self.types == 'tone':
+            if current_focus in self.entries:
+                focus_is_entry = True
+        elif self.types in ['pwm', 'output']:
+            for pin in self.entries:
+                if current_focus in pin:
+                    focus_is_entry = True
+        if focus_is_entry:
+            self.close_gui = True
+            self.closebutton.focus()
+        else:
+            self.close()
+
     def tone_setup(self):
         """
         Tone GUI for arduino
@@ -1642,6 +1836,7 @@ class ArduinoGUI(GUI):
             None
         """
         self.root.title('Tone Configuration')
+        self.types = 'tone'
         num_pins, self.num_entries = 1, 15
         scroll_frame = ScrollFrame(self.root, num_pins, self.num_entries+1)
         # Setup Buttons
@@ -1664,7 +1859,7 @@ class ArduinoGUI(GUI):
             Tk.Label(scroll_frame.middle_frame,
                      text='{:0>2}'.format(row+1)).grid(row=row+1, column=0)
             validate = (scroll_frame.middle_frame.register(self.entry_validate),
-                        'tone', False, row)
+                        False, row)
             self.entries[row] = Tk.Entry(
                 scroll_frame.middle_frame,
                 validate='focusout',
@@ -1672,9 +1867,10 @@ class ArduinoGUI(GUI):
             self.entries[row].grid(row=row+1, column=1, sticky=self.ALL)
             self.entries[row].config(state=Tk.DISABLED)
         # Confirm button
-        Tk.Button(scroll_frame.bottom_frame,
-                  text='CONFIRM',
-                  command=self.close).pack(side=Tk.TOP)
+        self.closebutton = Tk.Button(scroll_frame.bottom_frame,
+                                     text='CONFIRM',
+                                     command=self.pre_close)
+        self.closebutton.pack(side=Tk.TOP)
         scroll_frame.finalize()
         # Finish setup
         self.center()
@@ -1691,6 +1887,7 @@ class ArduinoGUI(GUI):
             None
         """
         self.root.title('Simple Output Config.')
+        self.types = 'output'
         num_pins, self.num_entries = 6, 15
         scroll_frame = ScrollFrame(self.root, num_pins, self.num_entries+1,
                                    bottom_padding=8)
@@ -1728,7 +1925,7 @@ class ArduinoGUI(GUI):
                                                                                  column=1+pin)
             for row in range(self.num_entries):
                 validate = (scroll_frame.middle_frame.register(self.entry_validate),
-                            'output', pin, row)
+                            pin, row)
                 Tk.Label(scroll_frame.middle_frame,
                          text='{:0>2}'.format(row+1)).grid(row=row+1, column=0)
                 self.entries[pin][row] = Tk.Entry(scroll_frame.middle_frame, width=18,
@@ -1737,9 +1934,10 @@ class ArduinoGUI(GUI):
                 self.entries[pin][row].grid(row=row+1, column=1+pin)
                 self.entries[pin][row].config(state=Tk.DISABLED)
         # Confirm Button
-        Tk.Button(scroll_frame.bottom_frame,
-                  text='CONFIRM',
-                  command=self.close).pack(side=Tk.TOP)
+        self.closebutton = Tk.Button(scroll_frame.bottom_frame,
+                                     text='CONFIRM',
+                                     command=self.pre_close)
+        self.closebutton.pack(side=Tk.TOP)
         # Finish GUI Setup
         scroll_frame.finalize()
         self.root.geometry('980x280')
@@ -1748,9 +1946,9 @@ class ArduinoGUI(GUI):
     def pwm_setup(self):
         """
         PWM Config GUI Setup
-        :return:
         """
         self.root.title('PWM Configuration')
+        self.types = 'pwm'
         num_pins, self.num_entries = 5, 15
         scroll_frame = ScrollFrame(self.root, num_pins,
                                    self.num_entries+1, bottom_padding=24)
@@ -1793,7 +1991,7 @@ class ArduinoGUI(GUI):
                           'Phase Shift '.format(self.pwm_ids[pin])+'('+u'\u00b0'+')').grid(row=0, column=1+pin)
             for row in range(self.num_entries):
                 validate = (scroll_frame.middle_frame.register(self.entry_validate),
-                            'pwm', pin, row)
+                            pin, row)
                 Tk.Label(scroll_frame.middle_frame,
                          text='{:0>2}'.format(row+1)).grid(row=row+1, column=0)
                 self.entries[pin][row] = Tk.Entry(scroll_frame.middle_frame, width=25,
@@ -1803,9 +2001,10 @@ class ArduinoGUI(GUI):
                     row=row+1, column=1+pin)
                 self.entries[pin][row].config(state='disabled')
         # Confirm Button
-        Tk.Button(scroll_frame.bottom_frame,
-                  text='CONFIRM',
-                  command=self.close).pack(side=Tk.TOP)
+        self.closebutton = Tk.Button(scroll_frame.bottom_frame,
+                                     text='CONFIRM',
+                                     command=self.pre_close)
+        self.closebutton.pack(side=Tk.TOP)
         # Finish Tone Setup
         scroll_frame.finalize()
         geometry = self.platform_geometry(windows=False,
@@ -1958,18 +2157,18 @@ class MainSettings(object):
         self.fp_last_used = {'ch_num': [],
                              'main_freq': 0,
                              'isos_freq': 0}
-        self.lj_last_used = {'ch_num': [], 'scan_freq': 0}
-        self.ard_last_used = {
-            'packet': [],
-            'tone_pack': [],
-            'out_pack': [],
-            'pwm_pack': []}
+        self.lj_last_used = {'ch_num': [],
+                             'scan_freq': 0}
+        self.ard_last_used = {'packet': [],
+                              'tone_pack': [],
+                              'out_pack': [],
+                              'pwm_pack': []}
         self.lj_presets = {}
         self.ard_presets = {}
 
     def load_examples(self):
         """
-        Example Presets
+        Example settings
         """
         if sys.platform.startswith('win'):
             self.ser_port = 'COM1'
@@ -1979,24 +2178,30 @@ class MainSettings(object):
         self.fp_last_used = {'ch_num': [0, 1, 2],
                              'main_freq': 211,
                              'isos_freq': 531}
-        self.lj_last_used = {'ch_num': [], 'scan_freq': 0}
-        self.ard_last_used = {
-            'packet': ['<BBLHHH', 255, 255, 0, 0, 0, 0],
-            'tone_pack': [],
-            'out_pack': [],
-            'pwm_pack': []
-        }
-        # All Saved Presets
+        self.lj_last_used = {'ch_num': [0, 1, 2],
+                             'scan_freq': 6250}
+        self.ard_last_used = {'packet': ['', 0, 0, 0, 0, 0, 0],
+                              'tone_pack': [],
+                              'out_pack': [],
+                              'pwm_pack': []}
+        # A few example presets for the first load
         self.lj_presets = {'example': {'ch_num': [0, 1, 2, 10, 11],
                                        'scan_freq': 6250}}
         self.ard_presets = {'example':
-                            {'packet': ['<BBLHHH', 255, 255,
-                                        180000, 1, 2, 0],
-                                'tone_pack': [['<LLH', 120000, 150000, 2800]],
-                                'out_pack': [['<LB', 148000, 4],
-                                             ['<LB', 150000, 4]],
-                                'pwm_pack': []}
-                            }
+                            {'packet': ['<BBLHHH', 255, 255, 180000, 1, 2, 0],
+                             'tone_pack': [['<LLH', 120000, 150000, 2800]],
+                             'out_pack': [['<LB', 148000, 4], ['<LB', 150000, 4]],
+                             'pwm_pack': []},
+                            'too much':
+                            {'packet': ['<BBLHHH', 255, 255, 300000, 3, 6, 2],
+                             'tone_pack': [['<LLH', 30000, 60000, 2800],
+                                           ['<LLH', 90000, 120000, 2800],
+                                           ['<LLH', 240000, 270000, 2000]],
+                             'out_pack': [['<LB', 58000, 140], ['<LB', 60000, 140],
+                                          ['<LB', 115000, 128], ['<LB', 145000, 128],
+                                          ['<LB', 200000, 32], ['<LB', 240000, 32]],
+                             'pwm_pack': [['<LLLfBBf', 0, 0, 150000, 20, 1, 0, 50],
+                                          ['<LLLfBBf', 0, 150000, 300000, 20, 1, 90, 20]]}}
 
     def check_dirs(self):
         """
@@ -2055,6 +2260,9 @@ dirs.load()
 
 # Run Main Loop
 main = MasterGUI(Tk.Tk())
+main.master.lift()
+main.master.attributes('-topmost', True)
+main.master.attributes('-topmost', False)
 main.master.mainloop()
 
 # Save Settings for Next Run
