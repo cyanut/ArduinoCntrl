@@ -62,6 +62,15 @@ def min_from_sec(secs, ms=False, option=None):
     return output
 
 
+def get_time_diff(start_time, choice='ms'):
+    """
+    Returns time difference from starting time
+    """
+    timediff = (datetime.now()-start_time)
+    if choice == 'ms':
+        return timediff.seconds*1000+timediff.microseconds/1000
+
+
 def get_day(options=0):
     """
     Returns day and time in various formats
@@ -181,105 +190,6 @@ def dict_flatten(*args):
 
 
 #################################################################
-# Timeout Decorator
-# noinspection PyUnusedLocal
-def cdquit(function):
-    """
-    Interrupts thread loop
-    """
-    sys.stderr.flush()
-    thread.interrupt_main()
-
-
-# noinspection PyMissingOrEmptyDocstring
-def exit_after(secs):
-    # noinspection PyMissingOrEmptyDocstring
-    def outer(function):
-        # noinspection PyMissingOrEmptyDocstring
-        def inner(*args, **kwargs):
-            timer = threading.Timer(secs,
-                                    cdquit,
-                                    args=[function.__name__])
-            timer.start()
-            try:
-                result = function(*args, **kwargs)
-            finally:
-                timer.cancel()
-            return result
-        return inner
-    return outer
-
-
-#################################################################
-# Arduino Communication
-class ArduinoComm(object):
-    """
-    Handles serial communication with arduino
-    """
-    def __init__(self):
-        self.baudrate = 115200
-        self.ser_port = dirs.settings.ser_port
-        # Markers are unicode chrs '<' and '>'
-        self.start_marker, self.end_marker = 60, 62
-        self.serial = serial.Serial(self.ser_port, self.baudrate)
-
-    def send_to_ard(self, send_str):
-        """
-        Sends packed str to arduino
-        """
-        self.serial.write(send_str)
-
-    def get_from_ard(self):
-        """
-        Reads serial data from arduino
-        """
-        ard_string = ''
-        byte_hold = 'z'
-        byte_count = -1
-        # We read and discard serial data until we hit '<'
-        while ord(byte_hold) != self.start_marker:
-            byte_hold = self.serial.read()
-        # Then we read and record serial data until we hit '>'
-        while ord(byte_hold) != self.end_marker:
-            if ord(byte_hold) != self.start_marker:
-                ard_string += byte_hold
-                byte_count += 1
-            byte_hold = self.serial.read()
-        return ard_string
-
-    @exit_after(5)
-    def wait_for_ard(self):
-        """
-        Wait for ready message from arduino
-        """
-        msg = ''
-        i = 0
-        while msg.find('Arduino is ready') == -1:
-            while self.serial.inWaiting() == 0:
-                time.sleep(0.1)
-                if i+1 == 30:
-                    tkMb.showinfo('Error!',
-                                  'Arduino is taking longer than usual'
-                                  'to connect...')
-                i += 1
-            msg = self.get_from_ard()
-        tkMb.showinfo('Success!',
-                      'Arduino connection established!\n\n'
-                      'Sending data packets...')
-
-    def send_packets(self, *args):
-        """
-        Send experiment config to arduino
-        """
-        for each in args:
-            for i in range(len(each)):
-                if len(each) > 0:
-                    get_str = self.get_from_ard()
-                    if get_str == 'M':
-                        self.send_to_ard(pack(*each[i]))
-
-
-#################################################################
 # GUIs
 # noinspection PyAttributeOutsideInit
 class MasterGUI(object):
@@ -301,8 +211,8 @@ class MasterGUI(object):
         self.save_dir_name_used = []
         self.ALL = Tk.N + Tk.E + Tk.S + Tk.W
         self.ttl_time = dirs.settings.ard_last_used['packet'][3]
-        self.ard_ser = ArduinoComm()
-        self.ard_new_serial = False
+        self.ard_ser = None
+        self.ard_new_serial = True
         #########################################
         # Give each setup GUI its own box
         #########################################
@@ -525,6 +435,11 @@ class MasterGUI(object):
         self.ard_status.set('Arduino Status: null')
         # Update Window
         self.gui_update_window()
+        self.ard_ser = ArduinoComm(self.ard_status)
+        if not self.ard_ser.run():
+            self.ard_serial_toplevel()
+        else:
+            print 'done'
 
     # General GUI Functions
     def gui_canvas_init(self):
@@ -933,25 +848,31 @@ class MasterGUI(object):
                                  i[on]])
         return ard_data
 
-    def ard_start_serial(self):
+    def ard_serial_toplevel(self):
         """
-        Tests for arduino over serial and connects if possible
+        Opens a top level dialogue
+        listing available serial ports to pick from
         """
-        try:
-            if self.ard_new_serial:
-                self.ard_ser = ArduinoComm()
-            elif not self.ard_new_serial:
-                self.ard_ser.serial.setDTR(False)
-                time.sleep(0.03)
-                self.ard_ser.serial.setDTR(True)
-            self.ard_status.set('Arduino Status: '
-                                'Opened Port [{}] '
-                                'with Baudrate [{}]'.format(self.ard_ser.ser_port,
-                                                            self.ard_ser.baudrate))
-        except IOError:
-            pass
-        except KeyboardInterrupt:
-            pass
+        serial_ports = list_serial_ports()
+        window = Tk.Toplevel(self.master)
+        top_frame = Tk.Frame(window)
+        top_frame.grid(row=0, sticky=self.ALL)
+        bottom_frame = Tk.Frame(window)
+        bottom_frame.grid(row=1, sticky=self.ALL)
+        self.port_chosen = Tk.StringVar()
+        self.port_chosen.set(' '*60)
+        Tk.OptionMenu(top_frame, self.port_chosen,
+                      *serial_ports,
+                      command=lambda port:
+                      self.start_serial(port)).pack()
+        window.mainloop()
+
+    def start_serial(self, port):
+        """
+        TEMP CHANGE
+        """
+        self.ard_ser.load(port)
+        self.ard_ser.start()
 
     # Save Functions
     def save_grab_list(self):
@@ -2271,6 +2192,146 @@ class ProgressBar(threading.Thread):
         Stops the progress bar
         """
         self.running = False
+
+
+#################################################################
+# Arduino Communication
+class ArduinoComm(threading.Thread):
+    """
+    Handles serial communication with arduino
+    """
+    def __init__(self, status_var):
+        threading.Thread.__init__(self)
+        self.baudrate = 115200
+        self.ser_port = dirs.settings.ser_port
+        # Markers are unicode chrs '<' and '>'
+        self.start_marker, self.end_marker = 60, 62
+        self.serial = None
+        self.status_var = status_var
+        self.ard_new_serial = True
+        self.port = False
+
+    def serial_connect(self):
+        """
+        Attempts to open ser_port
+        """
+        self.serial = serial.Serial(self.ser_port, self.baudrate)
+
+    def send_to_ard(self, send_str):
+        """
+        Sends packed str to arduino
+        """
+        self.serial.write(send_str)
+
+    def get_from_ard(self):
+        """
+        Reads serial data from arduino
+        """
+        ard_string = ''
+        byte_hold = 'z'
+        byte_count = -1
+        # We read and discard serial data until we hit '<'
+        while ord(byte_hold) != self.start_marker:
+            byte_hold = self.serial.read()
+        # Then we read and record serial data until we hit '>'
+        while ord(byte_hold) != self.end_marker:
+            if ord(byte_hold) != self.start_marker:
+                ard_string += byte_hold
+                byte_count += 1
+            byte_hold = self.serial.read()
+        return ard_string
+
+    def send_packets(self, *args):
+        """
+        Send experiment config to arduino
+        """
+        for each in args:
+            for i in range(len(each)):
+                if len(each) > 0:
+                    get_str = self.get_from_ard()
+                    if get_str == 'M':
+                        self.send_to_ard(pack(*each[i]))
+
+    def wait_for(self):
+        """
+        Wait for ready message from arduino
+        """
+        msg = ''
+        i = 0
+        start = datetime.now()
+        time_diff = 0
+        while msg.find('Arduino is ready') == -1:
+            while self.serial.inWaiting() == 0:
+                time.sleep(0.1)
+                if (i+1) % 10 == 0 and ((i+1) < 30 or (i+1) > 60):
+                    self.status_var.set('Arduino Status: '
+                                        'Waiting...')
+                if i+1 == 30:
+                    self.status_var.set('Arduino Status: '
+                                        'Taking longer than usual '
+                                        'to connect...')
+                i += 1
+                time_diff = get_time_diff(start)
+                print time_diff
+                if time_diff > 10000:
+                    return False
+            msg = self.get_from_ard()
+        if msg == 'Arduino is ready':
+            self.status_var.set('Arduino Status: '
+                                'Connection Established! '
+                                'Sending data packets...')
+        else:
+            self.status_var.set('FAILEDFAILEDFAILED')
+
+    def load(self, port):
+        """
+        TEMP CHANGE
+        """
+        self.port = port
+
+    def run(self):
+        """
+        Tests for arduino over serial and connects if possible
+        """
+        if self.port is not False:
+            self.ser_port = self.port
+        try:
+            if self.ard_new_serial:
+                self.serial_connect()
+            elif not self.ard_new_serial:
+                self.serial.setDTR(False)
+                time.sleep(0.03)
+                self.serial.setDTR(True)
+            self.status_var.set('Arduino Status: '
+                                'Opened Port [{}] '
+                                'with Baudrate [{}]'.format(self.ser_port,
+                                                            self.baudrate))
+            try:
+                time.sleep(0.5)
+                wait = self.wait_for()
+                if self.port is not False and not wait:
+                    dirs.settings.ser_port = self.port
+                return True
+            except IOError:
+                self.status_var.set('Arduino Status: '
+                                    'Serial Port [{}] '
+                                    'is either occupied '
+                                    'or cannot be '
+                                    'opened.'.format(self.ser_port))
+                return False
+            except KeyboardInterrupt:
+                self.status_var.set('Arduino Status: '
+                                    'Taking too long to respond. '
+                                    'Serial Port has been RESET.')
+                self.ser_port = 'RESET'
+                return False
+        except (serial.SerialException, IOError):
+            self.status_var.set('Arduino Status: '
+                                'Serial Port [{}] '
+                                'is either occupied '
+                                'or cannot be '
+                                'opened.'.format(dirs.settings.ser_port))
+            return False
 
 
 #################################################################
