@@ -6,6 +6,7 @@ import time
 import os
 import platform
 import glob
+import thread
 import threading
 import copy
 import calendar
@@ -178,10 +179,113 @@ def dict_flatten(*args):
         hold.append([i for s in a.values() for i in s])
     return hold
 
+
+#################################################################
+# Timeout Decorator
+# noinspection PyUnusedLocal
+def cdquit(function):
+    """
+    Interrupts thread loop
+    """
+    sys.stderr.flush()
+    thread.interrupt_main()
+
+
+# noinspection PyMissingOrEmptyDocstring
+def exit_after(secs):
+    # noinspection PyMissingOrEmptyDocstring
+    def outer(function):
+        # noinspection PyMissingOrEmptyDocstring
+        def inner(*args, **kwargs):
+            timer = threading.Timer(secs,
+                                    cdquit,
+                                    args=[function.__name__])
+            timer.start()
+            try:
+                result = function(*args, **kwargs)
+            finally:
+                timer.cancel()
+            return result
+        return inner
+    return outer
+
+
+#################################################################
+# Arduino Communication
+class ArduinoComm(object):
+    """
+    Handles serial communication with arduino
+    """
+    def __init__(self):
+        baudrate = 115200
+        ser_port = dirs.settings.ser_port
+        # Markers are unicode chrs '<' and '>'
+        self.start_marker, self.end_marker = 60, 62
+        self.serial = serial.Serial(ser_port, baudrate)
+
+    def send_to_ard(self, send_str):
+        """
+        Sends packed str to arduino
+        """
+        self.serial.write(send_str)
+
+    def get_from_ard(self):
+        """
+        Reads serial data from arduino
+        """
+        ard_string = ''
+        byte_hold = 'z'
+        byte_count = -1
+        # We read and discard serial data until we hit '<'
+        while ord(byte_hold) != self.start_marker:
+            byte_hold = self.serial.read()
+        # Then we read and record serial data until we hit '>'
+        while ord(byte_hold) != self.end_marker:
+            if ord(byte_hold) != self.start_marker:
+                ard_string += byte_hold
+                byte_count += 1
+            byte_hold = self.serial.read()
+        return ard_string
+
+    @exit_after(5)
+    def wait_for_ard(self):
+        """
+        Wait for ready message from arduino
+        """
+        msg = ''
+        i = 0
+        while msg.find('Arduino is ready') == -1:
+            while self.serial.inWaiting() == 0:
+                time.sleep(0.1)
+                if i+1 == 30:
+                    tkMb.showinfo('Error!',
+                                  'Arduino is taking longer than usual'
+                                  'to connect...')
+                i += 1
+            msg = self.get_from_ard()
+        tkMb.showinfo('Success!',
+                      'Arduino connection established!\n\n'
+                      'Sending data packets...')
+
+    def send_packets(self, *args):
+        """
+        Send experiment config to arduino
+        """
+        for each in args:
+            for i in range(len(each)):
+                if len(each) > 0:
+                    get_str = self.get_from_ard()
+                    if get_str == 'M':
+                        self.send_to_ard(pack(*each[i]))
+
+    def start_serial(self):
+        """
+        Begin nece
+        """
+
+
 #################################################################
 # GUIs
-
-
 # noinspection PyAttributeOutsideInit
 class MasterGUI(object):
     """
@@ -275,10 +379,11 @@ class MasterGUI(object):
         new_frame.pack(fill='both', expand='yes')
         self.new_save_entry = Tk.Entry(new_frame)
         self.new_save_entry.pack(side=Tk.TOP)
-        Tk.Button(new_frame,
-                  text='Create New',
-                  command=lambda:
-                  self.save_button_options(new=True)).pack(side=Tk.TOP)
+        self.new_save_button = Tk.Button(new_frame,
+                                         text='Create New',
+                                         command=lambda:
+                                         self.save_button_options(new=True))
+        self.new_save_button.pack(side=Tk.TOP)
         #########################################
         # LabJack Config
         # Frame
@@ -328,19 +433,14 @@ class MasterGUI(object):
                                         columnspan=80,
                                         sticky=self.ALL)
         # Debug Buttons
-        Tk.Button(ard_frame,
-                  text='DEBUG',
-                  command=lambda: pprint(vars(dirs.settings))).grid(row=0,
-                                                                    column=80,
-                                                                    columnspan=10,
-                                                                    sticky=self.ALL)
-        Tk.Button(ard_frame,
-                  text='ClrSvs',
-                  command=lambda:
-                  dirs.clear_saves(self.master)).grid(row=0,
-                                                      column=90,
-                                                      columnspan=10,
-                                                      sticky=self.ALL)
+        self.debug_button = Tk.Button(ard_frame, text='DEBUG',
+                                      command=lambda:
+                                      pprint(vars(dirs.settings)))
+        self.debug_button.grid(row=0, column=80, columnspan=10, sticky=self.ALL)
+        self.clr_svs_button = Tk.Button(ard_frame, text='ClrSvs',
+                                        command=lambda:
+                                        dirs.clear_saves(self.master))
+        self.clr_svs_button.grid(row=0, column=90, columnspan=10, sticky=self.ALL)
         # Main Progress Canvas
         self.ard_canvas = Tk.Canvas(ard_frame,
                                     width=1050,
@@ -402,21 +502,22 @@ class MasterGUI(object):
         self.sec_entry.insert(Tk.END,
                               '{}'.format(min_from_sec(self.ttl_time/1000,
                                                        option='sec')))
-        Tk.Button(ard_frame, text='Confirm', command=self.get_ttl_time).grid(row=ts_row+1, column=4, sticky=Tk.W)
+        self.ard_time_confirm = Tk.Button(ard_frame, text='Confirm',
+                                          command=self.get_ttl_time)
+        self.ard_time_confirm.grid(row=ts_row+1, column=4, sticky=Tk.W)
         # Tone Config
-        Tk.Button(ard_frame,
-                  text='Tone Setup',
-                  command=lambda types='tone':
-                  self.ard_config(types)).grid(row=5, column=0, sticky=self.ALL)
-        Tk.Button(ard_frame,
-                  text='PWM Setup',
-                  command=lambda types='pwm':
-                  self.ard_config(types)).grid(row=5, column=1, columnspan=3,
-                                               sticky=self.ALL)
-        Tk.Button(ard_frame,
-                  text='Simple Outputs',
-                  command=lambda types='output':
-                  self.ard_config(types)).grid(row=6, column=0, sticky=self.ALL)
+        self.tone_setup = Tk.Button(ard_frame, text='Tone Setup',
+                                    command=lambda types='tone':
+                                    self.ard_config(types))
+        self.tone_setup.grid(row=5, column=0, sticky=self.ALL)
+        self.out_setup = Tk.Button(ard_frame, text='PWM Setup',
+                                   command=lambda types='pwm':
+                                   self.ard_config(types))
+        self.out_setup.grid(row=5, column=1, columnspan=3, sticky=self.ALL)
+        self.pwm_setup = Tk.Button(ard_frame, text='Simple Outputs',
+                                   command=lambda types='output':
+                                   self.ard_config(types))
+        self.pwm_setup.grid(row=6, column=0, sticky=self.ALL)
         # Update Window
         self.update_window()
 
@@ -739,12 +840,10 @@ class MasterGUI(object):
         self.progbar = ProgressBar(self.ard_canvas,
                                    self.progress_shape,
                                    self.progress_text,
-                                   self.prog_on,
-                                   self.prog_off,
                                    self.ard_data.packet[3])
         self.prog_on.config(command=self.progbar_run)
         self.prog_off.config(state=Tk.DISABLED,
-                             command=self.progbar.stop)
+                             command=self.progbar_stop)
 
     def decode_ard_data(self, name, data_source):
         """
@@ -827,34 +926,6 @@ class MasterGUI(object):
                                                   window_height,
                                                   x_pos, y_pos))
 
-    def fp_toggle(self):
-        """
-        Toggles Photometry options On or Off
-        """
-        if self.fp_bool.get() == 1:
-            self.start_gui_button.config(state=Tk.NORMAL)
-            ch_num, main_freq, isos_freq = dirs.settings.quick_fp()
-            state = 'Channels: {}\nMain Freq: {}Hz\nIsos Freq: {}Hz'.format(ch_num,
-                                                                            main_freq,
-                                                                            isos_freq)
-            self.fp_str_var.set(state)
-        elif self.fp_bool.get() == 0:
-            self.start_gui_button.config(state=Tk.DISABLED)
-            self.fp_str_var.set('\n[N/A]\n')
-
-    def fp_config(self):
-        """
-        Configures photometry options
-        """
-        config = Tk.Toplevel(self.master)
-        config_run = PhotometryGUI(config)
-        config_run.run()
-        state = 'Channels: {}\nMain Freq: ' \
-                '{}Hz\nIsos Freq: {}Hz'.format(config_run.ch_num,
-                                               config_run.stim_freq['main'],
-                                               config_run.stim_freq['isos'])
-        self.fp_str_var.set(state)
-
     def grab_save_list(self):
         """
         Updates output save directories list
@@ -936,7 +1007,19 @@ class MasterGUI(object):
                 self.results_dir_used[self.preresults_dir] = dirs.results_dir
                 self.make_save_dir = 0
                 self.grab_save_list()
+            # Turn all buttons off and turn on STOP button
+            # Saves a lot of headache with coding in conditions otherwise
+            self.bulk_toggle(running=True)
             self.progbar.start()
+            # Finished. Turn buttons back on
+            self.bulk_toggle(running=False)
+
+    def progbar_stop(self):
+        """
+        Stops the progress bar
+        """
+        self.progbar.stop()
+        self.bulk_toggle(running=False)
 
     def lj_config(self):
         """
@@ -980,6 +1063,78 @@ class MasterGUI(object):
                     else:
                         break
             time.sleep(0.001)
+
+    def fp_toggle(self):
+        """
+        Toggles Photometry options On or Off
+        """
+        if self.fp_bool.get() == 1:
+            self.start_gui_button.config(state=Tk.NORMAL)
+            ch_num, main_freq, isos_freq = dirs.settings.quick_fp()
+            state = 'Channels: {}\nMain Freq: {}Hz\nIsos Freq: {}Hz'.format(ch_num,
+                                                                            main_freq,
+                                                                            isos_freq)
+            self.fp_str_var.set(state)
+        elif self.fp_bool.get() == 0:
+            self.start_gui_button.config(state=Tk.DISABLED)
+            self.fp_str_var.set('\n[N/A]\n')
+
+    def fp_config(self):
+        """
+        Configures photometry options
+        """
+        config = Tk.Toplevel(self.master)
+        config_run = PhotometryGUI(config)
+        config_run.run()
+        state = 'Channels: {}\nMain Freq: ' \
+                '{}Hz\nIsos Freq: {}Hz'.format(config_run.ch_num,
+                                               config_run.stim_freq['main'],
+                                               config_run.stim_freq['isos'])
+        self.fp_str_var.set(state)
+
+    def bulk_toggle(self, running):
+        """
+        Toggles all non-essential buttons to active
+         or disabled based on running state
+        """
+        if running:
+            self.prog_off.config(state=Tk.NORMAL)
+            self.prog_on.config(state=Tk.DISABLED)
+            self.fp_checkbutton.config(state=Tk.DISABLED)
+            self.start_gui_button.config(state=Tk.DISABLED)
+            self.save_dir_menu.config(state=Tk.DISABLED)
+            self.new_save_entry.config(state=Tk.DISABLED)
+            self.new_save_button.config(state=Tk.DISABLED)
+            self.lj_config_button.config(state=Tk.DISABLED)
+            self.lj_test_button.config(state=Tk.DISABLED)
+            self.debug_button.config(state=Tk.DISABLED)
+            self.clr_svs_button.config(state=Tk.DISABLED)
+            self.ard_preset_menu.config(state=Tk.DISABLED)
+            self.min_entry.config(state=Tk.DISABLED)
+            self.sec_entry.config(state=Tk.DISABLED)
+            self.ard_time_confirm.config(state=Tk.DISABLED)
+            self.tone_setup.config(state=Tk.DISABLED)
+            self.out_setup.config(state=Tk.DISABLED)
+            self.pwm_setup.config(state=Tk.DISABLED)
+        if not running:
+            self.prog_off.config(state=Tk.DISABLED)
+            self.prog_on.config(state=Tk.NORMAL)
+            self.fp_checkbutton.config(state=Tk.NORMAL)
+            self.start_gui_button.config(state=Tk.NORMAL)
+            self.save_dir_menu.config(state=Tk.NORMAL)
+            self.new_save_entry.config(state=Tk.NORMAL)
+            self.new_save_button.config(state=Tk.NORMAL)
+            self.lj_config_button.config(state=Tk.NORMAL)
+            self.lj_test_button.config(state=Tk.NORMAL)
+            self.debug_button.config(state=Tk.NORMAL)
+            self.clr_svs_button.config(state=Tk.NORMAL)
+            self.ard_preset_menu.config(state=Tk.NORMAL)
+            self.min_entry.config(state=Tk.NORMAL)
+            self.sec_entry.config(state=Tk.NORMAL)
+            self.ard_time_confirm.config(state=Tk.NORMAL)
+            self.tone_setup.config(state=Tk.NORMAL)
+            self.out_setup.config(state=Tk.NORMAL)
+            self.pwm_setup.config(state=Tk.NORMAL)
 
 
 class ScrollFrame(object):
@@ -1454,19 +1609,18 @@ class LabJackGUI(GUI):
 # noinspection PyAttributeOutsideInit,PyUnresolvedReferences,PyTypeChecker,PyStatementEffect,PyUnboundLocalVariable
 class ArduinoGUI(GUI):
     """
-    Arduino GUI Configuration
+    Handles user facing end of arduino communication
+    then passes input information to ArduinoComm
     """
     def __init__(self, master):
         self.root = master
         self.close_gui = False
         self.title = 'n/a'
         GUI.__init__(self, master)
-        self.baudrate = 115200
         self.num_entries = 0
         self.output_ids, self.pwm_ids = (range(2, 8), range(8, 14))
         self.pwm_ids.remove(10)
         # Pull last used settings
-        self.ser_port = dirs.settings.ser_port
         [self.packet, self.tone_pack,
          self.out_pack, self.pwm_pack] = dirs.settings.quick_ard()
         self.max_time = 0
@@ -2033,7 +2187,7 @@ class ProgressBar(threading.Thread):
     """
     Creates a dynamic progress bar
     """
-    def __init__(self, canvas, bar, time_gfx, button_on, button_off, ms_total_time):
+    def __init__(self, canvas, bar, time_gfx, ms_total_time):
         threading.Thread.__init__(self)
         self.canvas = canvas
         self.segment_size = (float(ms_total_time/1000))/1000
@@ -2043,8 +2197,6 @@ class ProgressBar(threading.Thread):
         self.running = False
         self.start_prog = None
         self.num_prog, self.num_time = 1, 1
-        self.button_on = button_on
-        self.button_off = button_off
         self.time_diff = 0
 
     def advance(self):
@@ -2067,8 +2219,6 @@ class ProgressBar(threading.Thread):
             time.sleep(0.005)
             if self.num_prog > 1000 or self.time_diff > float(self.ms_total_time/1000):
                 self.running = False
-                self.button_on.config(state=Tk.DISABLED)
-                self.button_off.config(state=Tk.NORMAL)
 
     def start(self):
         """
@@ -2082,16 +2232,12 @@ class ProgressBar(threading.Thread):
             self.num_prog, self.num_time = 1, 1
         self.start_prog = datetime.now()
         self.running = True
-        self.button_on.config(state=Tk.DISABLED)
-        self.button_off.config(state=Tk.NORMAL)
         self.advance()
 
     def stop(self):
         """
         Stops the progress bar
         """
-        self.button_on.config(state=Tk.NORMAL)
-        self.button_off.config(state=Tk.DISABLED)
         self.running = False
 
 
