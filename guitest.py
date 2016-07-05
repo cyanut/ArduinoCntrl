@@ -217,11 +217,11 @@ class ArduinoComm(object):
     Handles serial communication with arduino
     """
     def __init__(self):
-        baudrate = 115200
-        ser_port = dirs.settings.ser_port
+        self.baudrate = 115200
+        self.ser_port = dirs.settings.ser_port
         # Markers are unicode chrs '<' and '>'
         self.start_marker, self.end_marker = 60, 62
-        self.serial = serial.Serial(ser_port, baudrate)
+        self.serial = serial.Serial(self.ser_port, self.baudrate)
 
     def send_to_ard(self, send_str):
         """
@@ -278,11 +278,6 @@ class ArduinoComm(object):
                     if get_str == 'M':
                         self.send_to_ard(pack(*each[i]))
 
-    def start_serial(self):
-        """
-        Begin nece
-        """
-
 
 #################################################################
 # GUIs
@@ -306,6 +301,8 @@ class MasterGUI(object):
         self.save_dir_name_used = []
         self.ALL = Tk.N + Tk.E + Tk.S + Tk.W
         self.ttl_time = dirs.settings.ard_last_used['packet'][3]
+        self.ard_ser = ArduinoComm()
+        self.ard_new_serial = False
         #########################################
         # Give each setup GUI its own box
         #########################################
@@ -337,7 +334,7 @@ class MasterGUI(object):
         Tk.Label(photometry_frame, textvariable=self.fp_str_var).pack()
         #########################################
         # Save File Config
-        self.grab_save_list()
+        self.save_grab_list()
         # Primary Save Frame
         save_frame = Tk.LabelFrame(self.master,
                                    text='Data Output Save Location',
@@ -448,7 +445,7 @@ class MasterGUI(object):
         self.ard_canvas.grid(row=1,
                              column=0,
                              columnspan=100)
-        self.canvas_init()
+        self.gui_canvas_init()
         # Progress Bar Control Buttons
         bs_row = 5
         self.prog_on = Tk.Button(ard_frame,
@@ -462,17 +459,17 @@ class MasterGUI(object):
                            column=4,
                            stick=self.ALL)
         # Grab Data and Generate Progress Bar
-        self.grab_ard_data()
+        self.ard_grab_data()
         # Arduino Presets
         as_row = 7
-        self.update_ard_preset_list()
+        self.ard_update_preset_list()
         self.ard_preset_chosen = Tk.StringVar()
         self.ard_preset_chosen.set('{: <40}'.format('(select a preset)'))
         self.ard_preset_menu = Tk.OptionMenu(ard_frame,
                                              self.ard_preset_chosen,
                                              *self.ard_preset_list,
                                              command=lambda file_in:
-                                             self.grab_ard_data(True, file_in))
+                                             self.ard_grab_data(True, file_in))
         self.ard_preset_menu.grid(row=as_row,
                                   column=0,
                                   columnspan=4,
@@ -503,7 +500,7 @@ class MasterGUI(object):
                               '{}'.format(min_from_sec(self.ttl_time/1000,
                                                        option='sec')))
         self.ard_time_confirm = Tk.Button(ard_frame, text='Confirm',
-                                          command=self.get_ttl_time)
+                                          command=self.ard_get_time)
         self.ard_time_confirm.grid(row=ts_row+1, column=4, sticky=Tk.W)
         # Tone Config
         self.tone_setup = Tk.Button(ard_frame, text='Tone Setup',
@@ -518,33 +515,121 @@ class MasterGUI(object):
                                    command=lambda types='output':
                                    self.ard_config(types))
         self.pwm_setup.grid(row=6, column=0, sticky=self.ALL)
+        # Status messages for arduino serial communication
+        self.ard_status = Tk.StringVar()
+        Tk.Label(ard_frame, anchor=Tk.W,
+                 textvariable=self.ard_status,
+                 relief=Tk.SUNKEN).grid(row=4,
+                                        column=10, columnspan=85,
+                                        sticky=self.ALL)
+        self.ard_status.set('Arduino Status: null')
         # Update Window
-        self.update_window()
+        self.gui_update_window()
 
-    def get_ttl_time(self):
+    # General GUI Functions
+    def gui_canvas_init(self):
         """
-        Gets total exp time from GUI input
+        Setup Progress bar Canvas
         """
-        try:
-            # Grab Inputs
-            mins = int(self.min_entry.get().strip())
-            secs = int(self.sec_entry.get().strip())
-            mins += secs//60
-            secs %= 60
-            # Update Fields if improper format entered
-            self.min_entry.delete(0, Tk.END)
-            self.min_entry.insert(Tk.END, '{:0>2}'.format(mins))
-            self.sec_entry.delete(0, Tk.END)
-            self.sec_entry.insert(Tk.END, '{:0>2}'.format(secs))
-            # Update Vairbales
-            self.ttl_time = (mins*60+secs)*1000
-            dirs.settings.ard_last_used['packet'][3] = self.ttl_time
-            self.grab_ard_data(destroy=True)
-        except ValueError:
-            tkMb.showinfo('Error!',
-                          'Time must be entered as integers',
-                          parent=self.master)
+        # Backdrop
+        self.ard_canvas.create_rectangle(0, 0,
+                                         1050, self.ard_bckgrd_height,
+                                         fill='black', outline='black')
+        self.ard_canvas.create_rectangle(0, 35 - 1,
+                                         1050, 35 + 1,
+                                         fill='white')
+        self.ard_canvas.create_rectangle(0, 155 - 1,
+                                         1050, 155 + 1,
+                                         fill='white')
+        self.ard_canvas.create_rectangle(0, 15 - 1,
+                                         1050, 15 + 1,
+                                         fill='white')
+        self.ard_canvas.create_rectangle(0, self.ard_bckgrd_height - 5 - 1,
+                                         1050, self.ard_bckgrd_height - 5 + 1,
+                                         fill='white')
+        self.ard_canvas.create_rectangle(0, 15,
+                                         0, self.ard_bckgrd_height - 5,
+                                         fill='white', outline='white')
+        self.ard_canvas.create_rectangle(1000, 15,
+                                         1013, self.ard_bckgrd_height - 5,
+                                         fill='white', outline='white')
+        # Type Labels
+        self.ard_canvas.create_rectangle(1000, 0,
+                                         1013, 15,
+                                         fill='black')
+        self.ard_canvas.create_text(1000 + 7, 15 + 10,
+                                    text=u'\u266b', fill='black')
+        self.ard_canvas.create_rectangle(1000, 35,
+                                         1013, 35,
+                                         fill='black')
+        self.ard_canvas.create_text(1000 + 7, 35 + 10,
+                                    text='S', fill='black')
+        self.ard_canvas.create_text(1000 + 7, 55 + 10,
+                                    text='I', fill='black')
+        self.ard_canvas.create_text(1000 + 7, 75 + 10,
+                                    text='M', fill='black')
+        self.ard_canvas.create_text(1000 + 7, 95 + 10,
+                                    text='P', fill='black')
+        self.ard_canvas.create_text(1000 + 7, 115 + 10,
+                                    text='L', fill='black')
+        self.ard_canvas.create_text(1000 + 7, 135 + 10,
+                                    text='E', fill='black')
+        self.ard_canvas.create_rectangle(1000, 155,
+                                         1013, 155,
+                                         fill='black')
+        self.ard_canvas.create_text(1000 + 7, 175 + 10,
+                                    text='P', fill='black')
+        self.ard_canvas.create_text(1000 + 7, 195 + 10,
+                                    text='W', fill='black')
+        self.ard_canvas.create_text(1000 + 7, 215 + 10,
+                                    text='M', fill='black')
+        self.ard_canvas.create_rectangle(1000, self.ard_bckgrd_height - 5,
+                                         1013, self.ard_bckgrd_height,
+                                         fill='black')
+        # Arduino Pin Labels
+        self.ard_canvas.create_text(1027 + 6, 9,
+                                    text='PINS', fill='white')
+        self.ard_canvas.create_text(1027 + 6, 15 + 10,
+                                    text='10', fill='white')
+        self.ard_canvas.create_text(1027 + 6, 35 + 10,
+                                    text='02', fill='white')
+        self.ard_canvas.create_text(1027 + 6, 55 + 10,
+                                    text='03', fill='white')
+        self.ard_canvas.create_text(1027 + 6, 75 + 10,
+                                    text='04', fill='white')
+        self.ard_canvas.create_text(1027 + 6, 95 + 10,
+                                    text='05', fill='white')
+        self.ard_canvas.create_text(1027 + 6, 115 + 10,
+                                    text='06', fill='white')
+        self.ard_canvas.create_text(1027 + 6, 135 + 10,
+                                    text='07', fill='white')
+        self.ard_canvas.create_text(1027 + 6, 155 + 10,
+                                    text='08', fill='white')
+        self.ard_canvas.create_text(1027 + 6, 175 + 10,
+                                    text='09', fill='white')
+        self.ard_canvas.create_text(1027 + 6, 195 + 10,
+                                    text='11', fill='white')
+        self.ard_canvas.create_text(1027 + 6, 215 + 10,
+                                    text='12', fill='white')
+        self.ard_canvas.create_text(1027 + 6, 235 + 10,
+                                    text='13', fill='white')
 
+    def gui_update_window(self):
+        """
+        Update GUI Idle tasks, and centers
+        """
+        self.master.update_idletasks()
+        screen_width = self.master.winfo_screenwidth()
+        screen_height = self.master.winfo_screenheight()
+        [window_width, window_height] = list(int(i) for i in
+                                             self.master.geometry().split('+')[0].split('x'))
+        x_pos = screen_width / 2 - window_width / 2
+        y_pos = screen_height / 2 - window_height / 2
+        self.master.geometry('{}x{}+{}+{}'.format(window_width,
+                                                  window_height,
+                                                  x_pos, y_pos))
+
+    # Arduino Functions
     def ard_config(self, types):
         """
         Presents the requested Arduino GUI
@@ -583,102 +668,39 @@ class MasterGUI(object):
                     dirs.settings.ard_last_used['pwm_pack'].append(["<LLLfBBf"] + i)
                 dirs.settings.ard_last_used['pwm_pack'] = sorted(dirs.settings.ard_last_used['pwm_pack'],
                                                                  key=itemgetter(2))
-            self.grab_ard_data(destroy=True)
+            self.ard_grab_data(destroy=True)
 
-    def update_ard_preset_list(self):
+    def ard_get_time(self):
+        """
+        Gets total exp time from GUI input
+        """
+        try:
+            # Grab Inputs
+            mins = int(self.min_entry.get().strip())
+            secs = int(self.sec_entry.get().strip())
+            mins += secs//60
+            secs %= 60
+            # Update Fields if improper format entered
+            self.min_entry.delete(0, Tk.END)
+            self.min_entry.insert(Tk.END, '{:0>2}'.format(mins))
+            self.sec_entry.delete(0, Tk.END)
+            self.sec_entry.insert(Tk.END, '{:0>2}'.format(secs))
+            # Update Vairbales
+            self.ttl_time = (mins*60+secs)*1000
+            dirs.settings.ard_last_used['packet'][3] = self.ttl_time
+            self.ard_grab_data(destroy=True)
+        except ValueError:
+            tkMb.showinfo('Error!',
+                          'Time must be entered as integers',
+                          parent=self.master)
+
+    def ard_update_preset_list(self):
         """
         List of all Arduino Presets
         """
         self.ard_preset_list = [i for i in dirs.settings.ard_presets]
 
-    def canvas_init(self):
-        """
-        Setup Progress bar Canvas
-        """
-        # Backdrop
-        self.ard_canvas.create_rectangle(0, 0,
-                                         1050, self.ard_bckgrd_height,
-                                         fill='black', outline='black')
-        self.ard_canvas.create_rectangle(0, 35-1,
-                                         1050, 35+1,
-                                         fill='white')
-        self.ard_canvas.create_rectangle(0, 155-1,
-                                         1050, 155+1,
-                                         fill='white')
-        self.ard_canvas.create_rectangle(0, 15-1,
-                                         1050, 15+1,
-                                         fill='white')
-        self.ard_canvas.create_rectangle(0, self.ard_bckgrd_height-5-1,
-                                         1050, self.ard_bckgrd_height-5+1,
-                                         fill='white')
-        self.ard_canvas.create_rectangle(0, 15,
-                                         0, self.ard_bckgrd_height-5,
-                                         fill='white', outline='white')
-        self.ard_canvas.create_rectangle(1000, 15,
-                                         1013, self.ard_bckgrd_height-5,
-                                         fill='white', outline='white')
-        # Type Labels
-        self.ard_canvas.create_rectangle(1000, 0,
-                                         1013, 15,
-                                         fill='black')
-        self.ard_canvas.create_text(1000+7, 15+10,
-                                    text=u'\u266b', fill='black')
-        self.ard_canvas.create_rectangle(1000, 35,
-                                         1013, 35,
-                                         fill='black')
-        self.ard_canvas.create_text(1000+7, 35+10,
-                                    text='S', fill='black')
-        self.ard_canvas.create_text(1000+7, 55+10,
-                                    text='I', fill='black')
-        self.ard_canvas.create_text(1000+7, 75+10,
-                                    text='M', fill='black')
-        self.ard_canvas.create_text(1000+7, 95+10,
-                                    text='P', fill='black')
-        self.ard_canvas.create_text(1000+7, 115+10,
-                                    text='L', fill='black')
-        self.ard_canvas.create_text(1000+7, 135+10,
-                                    text='E', fill='black')
-        self.ard_canvas.create_rectangle(1000, 155,
-                                         1013, 155,
-                                         fill='black')
-        self.ard_canvas.create_text(1000+7, 175+10,
-                                    text='P', fill='black')
-        self.ard_canvas.create_text(1000+7, 195+10,
-                                    text='W', fill='black')
-        self.ard_canvas.create_text(1000+7, 215+10,
-                                    text='M', fill='black')
-        self.ard_canvas.create_rectangle(1000, self.ard_bckgrd_height-5,
-                                         1013, self.ard_bckgrd_height,
-                                         fill='black')
-        # Arduino Pin Labels
-        self.ard_canvas.create_text(1027+6, 9,
-                                    text='PINS', fill='white')
-        self.ard_canvas.create_text(1027+6, 15+10,
-                                    text='10', fill='white')
-        self.ard_canvas.create_text(1027+6, 35+10,
-                                    text='02', fill='white')
-        self.ard_canvas.create_text(1027+6, 55+10,
-                                    text='03', fill='white')
-        self.ard_canvas.create_text(1027+6, 75+10,
-                                    text='04', fill='white')
-        self.ard_canvas.create_text(1027+6, 95+10,
-                                    text='05', fill='white')
-        self.ard_canvas.create_text(1027+6, 115+10,
-                                    text='06', fill='white')
-        self.ard_canvas.create_text(1027+6, 135+10,
-                                    text='07', fill='white')
-        self.ard_canvas.create_text(1027+6, 155+10,
-                                    text='08', fill='white')
-        self.ard_canvas.create_text(1027+6, 175+10,
-                                    text='09', fill='white')
-        self.ard_canvas.create_text(1027+6, 195+10,
-                                    text='11', fill='white')
-        self.ard_canvas.create_text(1027+6, 215+10,
-                                    text='12', fill='white')
-        self.ard_canvas.create_text(1027+6, 235+10,
-                                    text='13', fill='white')
-
-    def grab_ard_data(self, destroy=False, load=False):
+    def ard_grab_data(self, destroy=False, load=False):
         """
         Obtain arduino data from saves
         """
@@ -769,7 +791,7 @@ class MasterGUI(object):
         self.tone_data, self.out_data, self.pwm_data = -1, -1, -1
         self.tone_bars = []
         if len(self.ard_data.tone_pack) != 0:
-            self.tone_data = self.decode_ard_data('tone', self.ard_data.tone_pack)
+            self.tone_data = self.ard_decode_data('tone', self.ard_data.tone_pack)
             self.tone_bars = [[]]*len(self.tone_data)
             for i in range(len(self.tone_data)):
                 self.tone_bars[i] = self.ard_canvas.create_rectangle(self.tone_data[i][0],
@@ -787,7 +809,7 @@ class MasterGUI(object):
         self.out_bars = []
         if len(self.ard_data.out_pack) != 0:
             pin_ids = range(2, 8)
-            self.out_data = self.decode_ard_data('output',
+            self.out_data = self.ard_decode_data('output',
                                                  self.ard_data.out_pack)
             self.out_bars = [[]]*len(self.out_data)
             for i in range(len(self.out_data)):
@@ -809,7 +831,7 @@ class MasterGUI(object):
         if len(self.ard_data.pwm_pack) != 0:
             pin_ids = range(8, 14)
             pin_ids.remove(10)
-            self.pwm_data = self.decode_ard_data('pwm', self.ard_data.pwm_pack)
+            self.pwm_data = self.ard_decode_data('pwm', self.ard_data.pwm_pack)
             self.pwm_bars = [[]]*len(self.pwm_data)
             for i in range(len(self.pwm_data)):
                 y_pos = 155+(pin_ids.index(self.pwm_data[i][3]))*20
@@ -845,7 +867,7 @@ class MasterGUI(object):
         self.prog_off.config(state=Tk.DISABLED,
                              command=self.progbar_stop)
 
-    def decode_ard_data(self, name, data_source):
+    def ard_decode_data(self, name, data_source):
         """
         Read packed up Arduino Data and puts it in proper format
         """
@@ -911,22 +933,28 @@ class MasterGUI(object):
                                  i[on]])
         return ard_data
 
-    def update_window(self):
+    def ard_start_serial(self):
         """
-        Update GUI Idle tasks, and centers
+        Tests for arduino over serial and connects if possible
         """
-        self.master.update_idletasks()
-        screen_width = self.master.winfo_screenwidth()
-        screen_height = self.master.winfo_screenheight()
-        [window_width, window_height] = list(int(i) for i in
-                                             self.master.geometry().split('+')[0].split('x'))
-        x_pos = screen_width/2 - window_width/2
-        y_pos = screen_height/2 - window_height/2
-        self.master.geometry('{}x{}+{}+{}'.format(window_width,
-                                                  window_height,
-                                                  x_pos, y_pos))
+        try:
+            if self.ard_new_serial:
+                self.ard_ser = ArduinoComm()
+            elif not self.ard_new_serial:
+                self.ard_ser.serial.setDTR(False)
+                time.sleep(0.03)
+                self.ard_ser.serial.setDTR(True)
+            self.ard_status.set('Arduino Status: '
+                                'Opened Port [{}] '
+                                'with Baudrate [{}]'.format(self.ard_ser.ser_port,
+                                                            self.ard_ser.baudrate))
+        except IOError:
+            pass
+        except KeyboardInterrupt:
+            pass
 
-    def grab_save_list(self):
+    # Save Functions
+    def save_grab_list(self):
         """
         Updates output save directories list
         """
@@ -938,7 +966,7 @@ class MasterGUI(object):
         """
         Determines whether to make a new save folder or not
         """
-        self.grab_save_list()
+        self.save_grab_list()
         ready = 0
         if new:
             new_save_entry = self.new_save_entry.get().strip().lower()
@@ -984,43 +1012,7 @@ class MasterGUI(object):
             )
             dirs.settings.save_dir = self.save_dir_to_use
 
-    def progbar_run(self):
-        """
-        Check if valid settings, make directories, and start progress bar
-        """
-        if len(self.save_dir_list) == 0 and len(self.results_dir_used) == 0 and dirs.settings.save_dir == '':
-            tkMb.showinfo('Error!',
-                          'You must first create a directory to save data output.',
-                          parent=self.master)
-        else:
-            if len(self.results_dir_used) == 0:
-                self.preresults_dir = str(dirs.main_save_dir)+dirs.settings.save_dir+'/'
-                dirs.results_dir = self.preresults_dir+'{} at [{}]/'.format(get_day(2),
-                                                                            get_day(3))
-                self.make_save_dir = 1
-                self.save_file_name.set('Currently Selected:\n[{}]'.format(
-                    limit_string_length(
-                        dirs.settings.save_dir.upper(),
-                        20)))
-            if self.make_save_dir == 1 or not os.path.isdir(dirs.results_dir):
-                os.makedirs(dirs.results_dir)
-                self.results_dir_used[self.preresults_dir] = dirs.results_dir
-                self.make_save_dir = 0
-                self.grab_save_list()
-            # Turn all buttons off and turn on STOP button
-            # Saves a lot of headache with coding in conditions otherwise
-            self.bulk_toggle(running=True)
-            self.progbar.start()
-            # Finished. Turn buttons back on
-            self.bulk_toggle(running=False)
-
-    def progbar_stop(self):
-        """
-        Stops the progress bar
-        """
-        self.progbar.stop()
-        self.bulk_toggle(running=False)
-
+    # LabJack Functions
     def lj_config(self):
         """
         Opens LJ GUI for settings config
@@ -1064,6 +1056,7 @@ class MasterGUI(object):
                         break
             time.sleep(0.001)
 
+    # Photometry Functions
     def fp_toggle(self):
         """
         Toggles Photometry options On or Off
@@ -1092,7 +1085,46 @@ class MasterGUI(object):
                                                config_run.stim_freq['isos'])
         self.fp_str_var.set(state)
 
-    def bulk_toggle(self, running):
+    # Progress Bar Functions
+    def progbar_run(self):
+        """
+        Check if valid settings, make directories, and start progress bar
+        """
+        if len(self.save_dir_list) == 0 and len(self.results_dir_used) == 0 and dirs.settings.save_dir == '':
+            tkMb.showinfo('Error!',
+                          'You must first create a directory to save data output.',
+                          parent=self.master)
+        else:
+            if len(self.results_dir_used) == 0:
+                self.preresults_dir = str(dirs.main_save_dir)+dirs.settings.save_dir+'/'
+                dirs.results_dir = self.preresults_dir+'{} at [{}]/'.format(get_day(2),
+                                                                            get_day(3))
+                self.make_save_dir = 1
+                self.save_file_name.set('Currently Selected:\n[{}]'.format(
+                    limit_string_length(
+                        dirs.settings.save_dir.upper(),
+                        20)))
+            if self.make_save_dir == 1 or not os.path.isdir(dirs.results_dir):
+                os.makedirs(dirs.results_dir)
+                self.results_dir_used[self.preresults_dir] = dirs.results_dir
+                self.make_save_dir = 0
+                self.save_grab_list()
+            # Turn all buttons off and turn on STOP button
+            # Saves a lot of headache with coding in conditions otherwise
+            self.run_bulk_toggle(running=True)
+            self.progbar.start()
+            # Finished. Turn buttons back on
+            self.run_bulk_toggle(running=False)
+
+    def progbar_stop(self):
+        """
+        Stops the progress bar
+        """
+        self.progbar.stop()
+        self.run_bulk_toggle(running=False)
+
+    # Experiment Run Functions
+    def run_bulk_toggle(self, running):
         """
         Toggles all non-essential buttons to active
          or disabled based on running state
@@ -2419,9 +2451,6 @@ dirs.load()
 
 # Run Main Loop
 main = MasterGUI(Tk.Tk())
-main.master.lift()
-main.master.attributes('-topmost', True)
-main.master.attributes('-topmost', False)
 main.master.mainloop()
 
 # Save Settings for Next Run
