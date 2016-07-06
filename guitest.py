@@ -223,10 +223,13 @@ class MasterGUI(object):
         self.save_dir_name_used = []
         self.ALL = Tk.N + Tk.E + Tk.S + Tk.W
         self.ttl_time = dirs.settings.ard_last_used['packet'][3]
-        self.ard_ser = None
-        self.ard_new_serial = True
         self.master.protocol('WM_DELETE_WINDOW', self.hard_exit)
-        self.queue = Queue.Queue()
+        # Threading control and devices
+        self.master_queue = Queue.Queue()
+        self.ard_queue = Queue.Queue()
+        self.ard_ser = None
+        self.lj_queue = Queue.Queue()
+        self.lj_instance = None
         #########################################
         # Give each setup GUI its own box
         #########################################
@@ -329,11 +332,7 @@ class MasterGUI(object):
         self.lj_config_button = Tk.Button(lj_frame,
                                           text='CONFIG',
                                           command=self.lj_config)
-        self.lj_config_button.pack(side=Tk.LEFT, expand=True)
-        self.lj_test_button = Tk.Button(lj_frame,
-                                        text='Test LabJack',
-                                        command=self.lj_test)
-        self.lj_test_button.pack(side=Tk.RIGHT, expand=True)
+        self.lj_config_button.pack(side=Tk.BOTTOM, expand=True)
         #########################################
         # Arduino Config
         # Frame
@@ -439,7 +438,8 @@ class MasterGUI(object):
                                    command=lambda types='output':
                                    self.ard_config(types))
         self.pwm_setup.grid(row=6, column=0, sticky=self.ALL)
-        # Status messages for arduino serial communication
+        # Status messages for devices
+        # arduino
         self.ard_status = Tk.StringVar()
         Tk.Label(ard_frame, anchor=Tk.E, text='Arduino Status:  ').grid(row=4,
                                                                         column=10,
@@ -451,6 +451,17 @@ class MasterGUI(object):
                                         column=25, columnspan=70,
                                         sticky=self.ALL)
         self.ard_status.set('null')
+        # LabJack
+        self.lj_status = Tk.StringVar()
+        Tk.Label(ard_frame, anchor=Tk.E, text='LabJack Status:  ').grid(row=5,
+                                                                        column=10,
+                                                                        columnspan=15,
+                                                                        sticky=self.ALL)
+        Tk.Label(ard_frame, anchor=Tk.W,
+                 textvariable=self.lj_status,
+                 relief=Tk.SUNKEN).grid(row=5, column=25, columnspan=35,
+                                        sticky=self.ALL)
+        self.lj_status.set('null')
         # Update Window
         self.gui_update_window()
 
@@ -581,23 +592,71 @@ class MasterGUI(object):
                              'Please STOP the experiment first.',
                              parent=self.master)
 
-    def gui_queue_process(self, success_msg, fail_msg, success_fn, fail_fn, rate=100):
+    def gui_queue_process(self, queue, success_msg, fail_msg,
+                          success_fn=None, fail_fn=None, rate=100):
         """
         Processes queues passed to threads
         """
+        rerun = False
         try:
-            queue_msg = self.queue.get(0)
-            if queue_msg == success_msg:
-                success_fn()
-            elif queue_msg == fail_msg:
-                fail_fn()
+            print "###################     "+str(rate)
+            print 1
+            print success_msg, fail_msg
+            print 2
+            print queue
+            queue_msg = queue.get(0)
+
+            print queue_msg
+            print 3
+            if queue_msg in success_msg:
+                print 4
+                print success_msg
+                print 5
+                success_msg.remove(queue_msg)
+                print 6
+                print success_msg
+                print 7
+                if len(success_msg) == 0:
+                    print 8
+                    print str(rate)+'proceeding'
+                    print 9
+                    if success_fn is not None:
+                        print 10
+                        success_fn()
+                        print 11
+                    else:
+                        print str(rate)+"PUTTNIG"
+                        print 12
+                        self.master_queue.put(success_msg[0])
+                        print 13
+                else:
+                    print 14
+                    print "RUNNING AGAIN"
+                    print 15
+                    rerun = True
+                    print 16
+            elif queue_msg in fail_msg:
+                print 17
+                if fail_fn is not None:
+                    print 18
+                    fail_fn()
+                    print 19
+                else:
+                    print 20
+                    self.master_queue.put(fail_msg)
+                    print 21
         except Queue.Empty:
+            print 22
+            rerun = True
+            print 23
+        if rerun:
+            print 24
+            print "RUNNING AGAIN   "+str(rate)
+            print 25
             self.master.after(rate, lambda:
-                              self.gui_queue_process(success_msg,
-                                                     fail_msg,
-                                                     success_fn,
-                                                     fail_fn,
-                                                     rate))
+                              self.gui_queue_process(queue, success_msg, fail_msg,
+                                                     success_fn, fail_fn, rate))
+        print 26
 
     # Save Functions
     def save_grab_list(self):
@@ -669,38 +728,6 @@ class MasterGUI(object):
         channels, freq = dirs.settings.quick_lj()
         self.lj_str_var.set('Channels:\n{}\n'
                             '\nScan Freq: [{}Hz]'.format(channels, freq))
-
-    def lj_test(self):
-        """
-        Checks if LabJack can be successfully connected
-        """
-        while True:
-            try:
-                temp = u6.U6()
-                temp.close()
-                time.sleep(0.5)
-                temp = u6.U6()
-                temp.hardReset()
-                tkMb.showinfo('Success!',
-                              'The LabJack has been properly configured',
-                              parent=self.master)
-                break
-            except LabJackPython.NullHandleException:
-                try:
-                    temp = u6.U6()
-                    temp.hardReset()
-                except LabJackPython.NullHandleException:
-                    retry = tkMb.askretrycancel('Error!',
-                                                'The LabJack is either unplugged '
-                                                'or is malfunctioning.\n\n'
-                                                'Disconnect and reconnect the device, '
-                                                'then click Retry.',
-                                                parent=self.master)
-                    if retry:
-                        time.sleep(3)
-                    else:
-                        break
-            time.sleep(0.001)
 
     # Photometry Functions
     def fp_toggle(self):
@@ -1040,8 +1067,10 @@ class MasterGUI(object):
         """
         Check if valid settings, make directories, and start progress bar
         """
-        self.queue.queue.clear()
-        self.ard_ser = ArduinoComm(self.ard_status, self.queue)
+        self.ard_queue.queue.clear()
+        self.ard_ser = ArduinoComm(self.ard_status, self.ard_queue)
+        self.lj_queue.queue.clear()
+        self.lj_instance = LabJackComm(self.lj_status, self.lj_queue)
         if len(self.save_dir_list) == 0 and len(self.results_dir_used) == 0 and dirs.settings.save_dir == '':
             tkMb.showinfo('Error!',
                           'You must first create a directory to save data output.',
@@ -1049,21 +1078,30 @@ class MasterGUI(object):
             return
         # Disable non-essential buttons to avoid errors between modules
         self.run_bulk_toggle(running=True)
-        # Start serial thread
+        # Start devices
         self.ard_ser.start()
-        # Start Prog thread
-        self.gui_queue_process(success_msg='Success',
-                               fail_msg='Failed',
+        self.lj_instance.start()
+        # Process the queue to see if we succeeded in connecting
+        self.gui_queue_process(success_msg=[self.ard_ser.success_msg],
+                               fail_msg=[self.ard_ser.fail_msg],
+                               queue=self.ard_queue, rate=8)
+        self.gui_queue_process(success_msg=[self.lj_instance.success_msg],
+                               fail_msg=[self.lj_instance.fail_msg],
+                               queue=self.lj_queue, rate=9)
+        self.gui_queue_process(success_msg=[self.ard_ser.success_msg,
+                                            self.lj_instance.success_msg],
+                               fail_msg=[self.ard_ser.fail_msg,
+                                         self.lj_instance.fail_msg],
                                success_fn=self.run_experiment,
-                               fail_fn=lambda:
-                               self.run_bulk_toggle(running=False),
-                               rate=1)
+                               fail_fn=lambda: self.run_bulk_toggle(running=False),
+                               queue=self.master_queue, rate=15)
 
     def progbar_stop(self):
         """
         Stops the progress bar
         """
-        self.queue.put('Failed')
+        self.ard_queue.put('FailedArd')
+        self.lj_queue.put('FailedLJ')
         self.progbar.stop()
         self.run_bulk_toggle(running=False)
         try:
@@ -1144,7 +1182,6 @@ class MasterGUI(object):
             self.new_save_entry.config(state=Tk.DISABLED)
             self.new_save_button.config(state=Tk.DISABLED)
             self.lj_config_button.config(state=Tk.DISABLED)
-            self.lj_test_button.config(state=Tk.DISABLED)
             # self.debug_button.config(state=Tk.DISABLED)
             self.clr_svs_button.config(state=Tk.DISABLED)
             self.ard_preset_menu.config(state=Tk.DISABLED)
@@ -1165,7 +1202,6 @@ class MasterGUI(object):
             self.new_save_entry.config(state=Tk.NORMAL)
             self.new_save_button.config(state=Tk.NORMAL)
             self.lj_config_button.config(state=Tk.NORMAL)
-            self.lj_test_button.config(state=Tk.NORMAL)
             # self.debug_button.config(state=Tk.NORMAL)
             self.clr_svs_button.config(state=Tk.NORMAL)
             self.ard_preset_menu.config(state=Tk.NORMAL)
@@ -2445,6 +2481,8 @@ class ArduinoComm(threading.Thread):
         self.serial = None
         self.status_var = status_var
         self.queue = queue
+        self.success_msg = 'SuccessArd'
+        self.fail_msg = 'FailedArd'
 
     def send_to_ard(self, send_str):
         """
@@ -2491,10 +2529,9 @@ class ArduinoComm(threading.Thread):
         ports = list_serial_ports()
         self.status_var.set('Connecting to Port '
                             '[{}]...'.format(self.ser_port))
-        time.sleep(1)
         connected = self.try_serial(self.ser_port)
         if connected:
-            self.queue.put('Success')
+            self.queue.put(self.success_msg)
             return
         elif not connected:
             for port in ports:
@@ -2503,11 +2540,11 @@ class ArduinoComm(threading.Thread):
                 if self.try_serial(port):
                     self.ser_port = port
                     dirs.settings.ser_port = port
-                    self.queue.put('Success')
+                    self.queue.put(self.success_msg)
                     return
             self.status_var.set('Failed to Connect to Arduino! '
                                 'Please make sure the device is plugged in.')
-            self.queue.put('Failed')
+            self.queue.put(self.fail_msg)
             return
 
     def wait_for(self):
@@ -2554,6 +2591,57 @@ class ArduinoComm(threading.Thread):
         self.serial.setDTR(True)
         if message != '':
             self.status_var.set(message)
+
+
+# LabJack Communication and Reading
+class LabJackComm(threading.Thread):
+    """
+    Handles reading and writing with LabJack
+    """
+    def __init__(self, status_var, queue):
+        threading.Thread.__init__(self)
+        self.daemon = True
+        self.status_var = status_var
+        self.queue = queue
+        self.success_msg = 'SuccessLJ'
+        self.fail_msg = 'FailedLJ'
+        self.instance = None
+
+    def run(self):
+        """
+        Attempts to connect to Labjack
+        """
+        self.status_var.set('Connecting to LabJack...')
+        try:
+            self.instance = u6.U6()
+            self.status_var.set('Connected to LabJack!')
+            self.queue.put(self.success_msg)
+            return
+        except LabJackPython.LabJackException:
+            try:
+                self.status_var.set('Failed. Attempting to close '
+                                    'previous instances...')
+                u6.U6().close()
+                time.sleep(2)
+                self.instance = u6.U6()
+                self.status_var.set('Connected to LabJack!')
+                self.queue.put(self.success_msg)
+                return
+            except LabJackPython.LabJackException:
+                try:
+                    self.status_var.set('Failed. Attempting a '
+                                        'hard reset...')
+                    u6.U6().hardReset()
+                    time.sleep(3)
+                    self.instance = u6.U6()
+                    self.status_var.set('Connected to LabJack!')
+                    self.queue.put(self.success_msg)
+                    return
+                except LabJackPython.LabJackException:
+                    self.status_var.set('LabJack cannot be reached! '
+                                        'Please reconnect the device.')
+                    self.queue.put(self.fail_msg)
+                    return
 
 
 #################################################################
