@@ -6,7 +6,6 @@ import time
 import os
 import platform
 import glob
-import thread
 import threading
 import copy
 import calendar
@@ -24,11 +23,14 @@ import numpy as np
 import Tkinter as Tk
 import tkMessageBox as tkMb
 import tkFont
-import LabJackPython
-import u6
-from u6 import U6
 import Pmw
-# import flycapture2a as fc2
+try:
+    import LabJackPython
+    import u6
+    from u6 import U6
+    import flycapture2a as fc2
+except ImportError:
+    pass
 
 
 #################################################################
@@ -175,9 +177,9 @@ def pin_to_int(pin):
     any given arduino pin
     """
     if pin < 8:
-        return int("1" + "0" * int(pin), 2)
+        return int('1' + '0' * int(pin), 2)
     if 8 <= pin <= 13:
-        return int("1" + "0" * (int(pin) - 8), 2)
+        return int('1' + '0' * (int(pin) - 8), 2)
 
 
 def dict_flatten(*args):
@@ -344,8 +346,7 @@ class MasterGUI(object):
                                         sticky=self.ALL)
         # Debug Buttons
         self.debug_button = Tk.Button(ard_frame, text='DEBUG',
-                                      command=lambda:
-                                      pprint(vars(dirs.settings)))
+                                      command=self.gui_debug)
         self.debug_button.grid(row=0, column=80, columnspan=10, sticky=self.ALL)
         self.clr_svs_button = Tk.Button(ard_frame, text='ClrSvs',
                                         command=lambda:
@@ -545,6 +546,18 @@ class MasterGUI(object):
         self.master.geometry('{}x{}+{}+{}'.format(window_width,
                                                   window_height,
                                                   x_pos, y_pos))
+
+    @staticmethod
+    def gui_debug():
+        """
+        Under the hood stuff here
+        """
+        print '#'*40+'DEBUG\n\n'
+        print 'SETTINGS'
+        pprint(vars(dirs.settings))
+        print '#'*15
+        print 'ACTIVE THREADS'
+        print threading.active_count()
 
     def hard_exit(self, allow=True):
         """
@@ -1010,7 +1023,9 @@ class MasterGUI(object):
         # Start serial thread
         self.ard_ser.start()
         # Start Prog thread
-        threading.Thread(target=self.progbar_thread).start()
+        prog_thread = threading.Thread(target=self.progbar_thread)
+        prog_thread.daemon = True
+        prog_thread.start()
 
     def progbar_thread(self):
         """
@@ -2180,6 +2195,7 @@ class ProgressBar(threading.Thread):
     """
     def __init__(self, canvas, bar, time_gfx, ms_total_time):
         threading.Thread.__init__(self)
+        self.daemon = True
         self.canvas = canvas
         self.segment_size = (float(ms_total_time/1000))/1000
         self.ms_total_time = ms_total_time
@@ -2235,6 +2251,7 @@ class ArduinoComm(threading.Thread):
     """
     def __init__(self, status_var):
         threading.Thread.__init__(self)
+        self.daemon = True
         self.baudrate = 115200
         self.ser_port = dirs.settings.ser_port
         # Markers are unicode chrs '<' and '>'
