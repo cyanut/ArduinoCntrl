@@ -31,8 +31,17 @@ try:
     import flycapture2a as fc2
 except ImportError:
     pass
-
-
+################################################################
+# To do list:
+# - All non-GUI functions in a queue enabled thread
+# - Fix refr for PWM
+# - Fix window geometry for output
+# - If unfocusing on something already entered, don't raise
+#   time overlap error window
+# - If entry is invalid should continue to focus back on
+# - Check: remove digitalWrite(13,LOW) statement but use
+#   external LED for pin 13. does it still stay on after
+#   reset? if yes, leave digitalwrite in; else rm for cleanliness.
 #################################################################
 # Global Variables
 NUM_LJ_CH = 14
@@ -217,6 +226,7 @@ class MasterGUI(object):
         self.ard_ser = None
         self.ard_new_serial = True
         self.master.protocol('WM_DELETE_WINDOW', self.hard_exit)
+        self.queue = Queue.Queue()
         #########################################
         # Give each setup GUI its own box
         #########################################
@@ -571,6 +581,156 @@ class MasterGUI(object):
                              'Please STOP the experiment first.',
                              parent=self.master)
 
+    def gui_queue_process(self, success_msg, fail_msg, success_fn, fail_fn, rate=100):
+        """
+        Processes queues passed to threads
+        """
+        try:
+            queue_msg = self.queue.get(0)
+            if queue_msg == success_msg:
+                success_fn()
+            elif queue_msg == fail_msg:
+                fail_fn()
+        except Queue.Empty:
+            self.master.after(rate, lambda:
+                              self.gui_queue_process(success_msg,
+                                                     fail_msg,
+                                                     success_fn,
+                                                     fail_fn,
+                                                     rate))
+
+    # Save Functions
+    def save_grab_list(self):
+        """
+        Updates output save directories list
+        """
+        self.save_dir_list = [d for d
+                              in os.listdir(dirs.main_save_dir)
+                              if os.path.isdir(dirs.main_save_dir+d)]
+
+    def save_button_options(self, inputs=None, new=False):
+        """
+        Determines whether to make a new save folder or not
+        """
+        self.save_grab_list()
+        ready = 0
+        if new:
+            new_save_entry = self.new_save_entry.get().strip().lower()
+            if new_save_entry in self.save_dir_list or new_save_entry in self.save_dir_name_used:
+                tkMb.showinfo('Error',
+                              'You cannot use an existing '
+                              'Save Entry Name; '
+                              'select it from the top '
+                              'dialogue instead.',
+                              parent=self.master)
+            elif len(new_save_entry) == 0:
+                tkMb.showinfo('Error!',
+                              'Please enter a name '
+                              'for your save directory.',
+                              parent=self.master)
+            else:
+                ready = 1
+                menu = self.save_dir_menu.children['menu']
+                if len(self.save_dir_list) == 0:
+                    menu.delete(0, Tk.END)
+                self.save_dir_to_use = str(new_save_entry)
+                self.dir_chosen.set(self.save_dir_to_use)
+                menu.add_command(label=self.save_dir_to_use,
+                                 command=lambda path=self.save_dir_to_use:
+                                 self.save_button_options(inputs=path))
+                self.save_dir_name_used.append(self.save_dir_to_use)
+        else:
+            ready = 1
+            self.dir_chosen.set(inputs)
+            self.save_dir_to_use = str(self.dir_chosen.get())
+        if ready == 1:
+            self.preresults_dir = str(dirs.main_save_dir)+self.save_dir_to_use+'/'
+            if self.preresults_dir not in self.results_dir_used:
+                dirs.results_dir = self.preresults_dir+'{} at [{}]/'.format(get_day(2), get_day(3))
+                self.make_save_dir = 1
+            else:
+                dirs.results_dir = self.results_dir_used[self.preresults_dir]
+                self.make_save_dir = 0
+            self.save_file_name.set(
+                'Currently Selected:\n[{}]'.format(
+                    limit_string_length(self.save_dir_to_use.upper(), 20)
+                )
+            )
+            dirs.settings.save_dir = self.save_dir_to_use
+
+    # LabJack Functions
+    def lj_config(self):
+        """
+        Opens LJ GUI for settings config
+        """
+        config = Tk.Toplevel(self.master)
+        config_run = LabJackGUI(config)
+        config_run.run()
+        channels, freq = dirs.settings.quick_lj()
+        self.lj_str_var.set('Channels:\n{}\n'
+                            '\nScan Freq: [{}Hz]'.format(channels, freq))
+
+    def lj_test(self):
+        """
+        Checks if LabJack can be successfully connected
+        """
+        while True:
+            try:
+                temp = u6.U6()
+                temp.close()
+                time.sleep(0.5)
+                temp = u6.U6()
+                temp.hardReset()
+                tkMb.showinfo('Success!',
+                              'The LabJack has been properly configured',
+                              parent=self.master)
+                break
+            except LabJackPython.NullHandleException:
+                try:
+                    temp = u6.U6()
+                    temp.hardReset()
+                except LabJackPython.NullHandleException:
+                    retry = tkMb.askretrycancel('Error!',
+                                                'The LabJack is either unplugged '
+                                                'or is malfunctioning.\n\n'
+                                                'Disconnect and reconnect the device, '
+                                                'then click Retry.',
+                                                parent=self.master)
+                    if retry:
+                        time.sleep(3)
+                    else:
+                        break
+            time.sleep(0.001)
+
+    # Photometry Functions
+    def fp_toggle(self):
+        """
+        Toggles Photometry options On or Off
+        """
+        if self.fp_bool.get() == 1:
+            self.start_gui_button.config(state=Tk.NORMAL)
+            ch_num, main_freq, isos_freq = dirs.settings.quick_fp()
+            state = 'Channels: {}\nMain Freq: {}Hz\nIsos Freq: {}Hz'.format(ch_num,
+                                                                            main_freq,
+                                                                            isos_freq)
+            self.fp_str_var.set(state)
+        elif self.fp_bool.get() == 0:
+            self.start_gui_button.config(state=Tk.DISABLED)
+            self.fp_str_var.set('\n[N/A]\n')
+
+    def fp_config(self):
+        """
+        Configures photometry options
+        """
+        config = Tk.Toplevel(self.master)
+        config_run = PhotometryGUI(config)
+        config_run.run()
+        state = 'Channels: {}\nMain Freq: ' \
+                '{}Hz\nIsos Freq: {}Hz'.format(config_run.ch_num,
+                                               config_run.stim_freq['main'],
+                                               config_run.stim_freq['isos'])
+        self.fp_str_var.set(state)
+
     # Arduino Functions
     def ard_config(self, types):
         """
@@ -875,223 +1035,97 @@ class MasterGUI(object):
                                  i[on]])
         return ard_data
 
-    # Save Functions
-    def save_grab_list(self):
-        """
-        Updates output save directories list
-        """
-        self.save_dir_list = [d for d
-                              in os.listdir(dirs.main_save_dir)
-                              if os.path.isdir(dirs.main_save_dir+d)]
-
-    def save_button_options(self, inputs=None, new=False):
-        """
-        Determines whether to make a new save folder or not
-        """
-        self.save_grab_list()
-        ready = 0
-        if new:
-            new_save_entry = self.new_save_entry.get().strip().lower()
-            if new_save_entry in self.save_dir_list or new_save_entry in self.save_dir_name_used:
-                tkMb.showinfo('Error',
-                              'You cannot use an existing '
-                              'Save Entry Name; '
-                              'select it from the top '
-                              'dialogue instead.',
-                              parent=self.master)
-            elif len(new_save_entry) == 0:
-                tkMb.showinfo('Error!',
-                              'Please enter a name '
-                              'for your save directory.',
-                              parent=self.master)
-            else:
-                ready = 1
-                menu = self.save_dir_menu.children['menu']
-                if len(self.save_dir_list) == 0:
-                    menu.delete(0, Tk.END)
-                self.save_dir_to_use = str(new_save_entry)
-                self.dir_chosen.set(self.save_dir_to_use)
-                menu.add_command(label=self.save_dir_to_use,
-                                 command=lambda path=self.save_dir_to_use:
-                                 self.save_button_options(inputs=path))
-                self.save_dir_name_used.append(self.save_dir_to_use)
-        else:
-            ready = 1
-            self.dir_chosen.set(inputs)
-            self.save_dir_to_use = str(self.dir_chosen.get())
-        if ready == 1:
-            self.preresults_dir = str(dirs.main_save_dir)+self.save_dir_to_use+'/'
-            if self.preresults_dir not in self.results_dir_used:
-                dirs.results_dir = self.preresults_dir+'{} at [{}]/'.format(get_day(2), get_day(3))
-                self.make_save_dir = 1
-            else:
-                dirs.results_dir = self.results_dir_used[self.preresults_dir]
-                self.make_save_dir = 0
-            self.save_file_name.set(
-                'Currently Selected:\n[{}]'.format(
-                    limit_string_length(self.save_dir_to_use.upper(), 20)
-                )
-            )
-            dirs.settings.save_dir = self.save_dir_to_use
-
-    # LabJack Functions
-    def lj_config(self):
-        """
-        Opens LJ GUI for settings config
-        """
-        config = Tk.Toplevel(self.master)
-        config_run = LabJackGUI(config)
-        config_run.run()
-        channels, freq = dirs.settings.quick_lj()
-        self.lj_str_var.set('Channels:\n{}\n'
-                            '\nScan Freq: [{}Hz]'.format(channels, freq))
-
-    def lj_test(self):
-        """
-        Checks if LabJack can be successfully connected
-        """
-        while True:
-            try:
-                temp = u6.U6()
-                temp.close()
-                time.sleep(0.5)
-                temp = u6.U6()
-                temp.hardReset()
-                tkMb.showinfo('Success!',
-                              'The LabJack has been properly configured',
-                              parent=self.master)
-                break
-            except LabJackPython.NullHandleException:
-                try:
-                    temp = u6.U6()
-                    temp.hardReset()
-                except LabJackPython.NullHandleException:
-                    retry = tkMb.askretrycancel('Error!',
-                                                'The LabJack is either unplugged '
-                                                'or is malfunctioning.\n\n'
-                                                'Disconnect and reconnect the device, '
-                                                'then click Retry.',
-                                                parent=self.master)
-                    if retry:
-                        time.sleep(3)
-                    else:
-                        break
-            time.sleep(0.001)
-
-    # Photometry Functions
-    def fp_toggle(self):
-        """
-        Toggles Photometry options On or Off
-        """
-        if self.fp_bool.get() == 1:
-            self.start_gui_button.config(state=Tk.NORMAL)
-            ch_num, main_freq, isos_freq = dirs.settings.quick_fp()
-            state = 'Channels: {}\nMain Freq: {}Hz\nIsos Freq: {}Hz'.format(ch_num,
-                                                                            main_freq,
-                                                                            isos_freq)
-            self.fp_str_var.set(state)
-        elif self.fp_bool.get() == 0:
-            self.start_gui_button.config(state=Tk.DISABLED)
-            self.fp_str_var.set('\n[N/A]\n')
-
-    def fp_config(self):
-        """
-        Configures photometry options
-        """
-        config = Tk.Toplevel(self.master)
-        config_run = PhotometryGUI(config)
-        config_run.run()
-        state = 'Channels: {}\nMain Freq: ' \
-                '{}Hz\nIsos Freq: {}Hz'.format(config_run.ch_num,
-                                               config_run.stim_freq['main'],
-                                               config_run.stim_freq['isos'])
-        self.fp_str_var.set(state)
-
     # Progress Bar Functions
     def progbar_run(self):
         """
         Check if valid settings, make directories, and start progress bar
         """
-        self.ard_ser = ArduinoComm(self.ard_status)
+        self.queue.queue.clear()
+        self.ard_ser = ArduinoComm(self.ard_status, self.queue)
         if len(self.save_dir_list) == 0 and len(self.results_dir_used) == 0 and dirs.settings.save_dir == '':
             tkMb.showinfo('Error!',
                           'You must first create a directory to save data output.',
                           parent=self.master)
-            return None
+            return
         # Disable non-essential buttons to avoid errors between modules
         self.run_bulk_toggle(running=True)
         # Start serial thread
         self.ard_ser.start()
         # Start Prog thread
-        prog_thread = threading.Thread(target=self.progbar_thread)
-        prog_thread.daemon = True
-        prog_thread.start()
-
-    def progbar_thread(self):
-        """
-        Main progressbar
-        components in a separate thread
-        so GUI doesn't get locked up
-        """
-        # Wait for arduino to connect to serial (or not)
-        while self.ard_ser.connected == 'none':
-            time.sleep(0.01)
-        # If we connect...
-        if self.ard_ser.connected:
-            # 1. Make sure there is somewhere to save our file outputs
-            if len(self.results_dir_used) == 0:
-                self.preresults_dir = str(dirs.main_save_dir)+dirs.settings.save_dir+'/'
-                dirs.results_dir = self.preresults_dir+'{} at [{}]/'.format(get_day(2),
-                                                                            get_day(3))
-                self.make_save_dir = 1
-                self.save_file_name.set('Currently Selected:\n[{}]'.format(
-                    limit_string_length(
-                        dirs.settings.save_dir.upper(),
-                        20)))
-            if self.make_save_dir == 1 or not os.path.isdir(dirs.results_dir):
-                os.makedirs(dirs.results_dir)
-                self.results_dir_used[self.preresults_dir] = dirs.results_dir
-                self.make_save_dir = 0
-                self.save_grab_list()
-            # 2. Pack up and send over data to the arduino
-            system_time = ["<L", calendar.timegm(time.gmtime()) - TIME_OFFSET]
-            pwm_pack_send = []
-            for i in dirs.settings.ard_last_used['pwm_pack']:
-                period = (float(1000000)/float(i[4]))
-                cycleTimeOn = long(round(period*(float(i[7])/float(100))))
-                cycleTimeOff = long(round(period*(float(1)-(float(i[7])/float(100)))))
-                timePhaseShift = long(round(period*(float(i[6])/float(360))))
-                pwm_pack_send.append(["<LLLLLBL",
-                                      0, i[2], i[3],
-                                      cycleTimeOn, cycleTimeOff,
-                                      i[5], timePhaseShift])
-            try:
-                self.ard_ser.send_packets([system_time],
-                                          [dirs.settings.ard_last_used['packet']],
-                                          dirs.settings.ard_last_used['tone_pack'],
-                                          dirs.settings.ard_last_used['out_pack'],
-                                          pwm_pack_send)
-                time.sleep(0.5)
-                self.ard_ser.send_to_ard(pack("<B", 1))
-            except serial.serialutil.SerialException:
-                print 'nope'
-            # 3. Start the GUI Prog Bar
-            message = self.progbar.start()
-            if message == 'finished':
-                self.ard_ser.reset('Procedure successful.')
-        # Finished. Turn buttons back on
-        self.run_bulk_toggle(running=False)
+        self.gui_queue_process(success_msg='Success',
+                               fail_msg='Failed',
+                               success_fn=self.run_experiment,
+                               fail_fn=lambda:
+                               self.run_bulk_toggle(running=False),
+                               rate=1)
 
     def progbar_stop(self):
         """
         Stops the progress bar
         """
+        self.queue.put('Failed')
         self.progbar.stop()
         self.run_bulk_toggle(running=False)
         try:
-            self.ard_ser.reset('Procedure terminated.')
+            self.ard_ser.reset('Procedure manually aborted.')
         except AttributeError:
-            pass
+            self.ard_status.set('Procedure terminated.')
+
+    def run_experiment(self):
+        """
+        If we succeed in connecting to our devices, do this
+        """
+        # 1. Make sure there is somewhere to save our file outputs
+        if len(self.results_dir_used) == 0:
+            self.preresults_dir = str(dirs.main_save_dir)+dirs.settings.save_dir+'/'
+            dirs.results_dir = self.preresults_dir+'{} at [{}]/'.format(get_day(2),
+                                                                        get_day(3))
+            self.make_save_dir = 1
+            self.save_file_name.set('Currently Selected:\n[{}]'.format(
+                limit_string_length(
+                    dirs.settings.save_dir.upper(),
+                    20)))
+        if self.make_save_dir == 1 or not os.path.isdir(dirs.results_dir):
+            os.makedirs(dirs.results_dir)
+            self.results_dir_used[self.preresults_dir] = dirs.results_dir
+            self.make_save_dir = 0
+            self.save_grab_list()
+        # 2. Pack up and send over data to the arduino
+        system_time = ["<L", calendar.timegm(time.gmtime()) - TIME_OFFSET]
+        pwm_pack_send = []
+        for i in dirs.settings.ard_last_used['pwm_pack']:
+            period = (float(1000000)/float(i[4]))
+            cycleTimeOn = long(round(period*(float(i[7])/float(100))))
+            cycleTimeOff = long(round(period*(float(1)-(float(i[7])/float(100)))))
+            timePhaseShift = long(round(period*(float(i[6])/float(360))))
+            pwm_pack_send.append(["<LLLLLBL",
+                                  0, i[2], i[3],
+                                  cycleTimeOn, cycleTimeOff,
+                                  i[5], timePhaseShift])
+        try:
+            self.ard_status.set('Success! Connected to '
+                                'Serial Port [{}]. '
+                                'Sending data '
+                                'packets...'.format(self.ard_ser.ser_port))
+            self.ard_ser.send_packets([system_time],
+                                      [dirs.settings.ard_last_used['packet']],
+                                      dirs.settings.ard_last_used['tone_pack'],
+                                      dirs.settings.ard_last_used['out_pack'],
+                                      pwm_pack_send)
+            self.ard_status.set('Success! Connected to '
+                                'Serial Port [{}]. '
+                                'Data packets sent'.format(self.ard_ser.ser_port))
+            self.ard_ser.send_to_ard(pack("<B", 1))
+            # 3. Start the GUI Prog Bar
+            message = self.progbar.start()
+            if message == 'finished':
+                self.ard_ser.reset('Procedure successful.')
+        except serial.serialutil.SerialException:
+            tkMb.showwarning('Error!', 'Arduino became disconnected!\n\n'
+                                       'Reconnect the device and try again.',
+                             parent=self.master)
+        # Finished. Turn buttons back on
+        self.run_bulk_toggle(running=False)
 
     # Experiment Run Functions
     def run_bulk_toggle(self, running):
@@ -1111,7 +1145,7 @@ class MasterGUI(object):
             self.new_save_button.config(state=Tk.DISABLED)
             self.lj_config_button.config(state=Tk.DISABLED)
             self.lj_test_button.config(state=Tk.DISABLED)
-            self.debug_button.config(state=Tk.DISABLED)
+            # self.debug_button.config(state=Tk.DISABLED)
             self.clr_svs_button.config(state=Tk.DISABLED)
             self.ard_preset_menu.config(state=Tk.DISABLED)
             self.min_entry.config(state=Tk.DISABLED)
@@ -1132,7 +1166,7 @@ class MasterGUI(object):
             self.new_save_button.config(state=Tk.NORMAL)
             self.lj_config_button.config(state=Tk.NORMAL)
             self.lj_test_button.config(state=Tk.NORMAL)
-            self.debug_button.config(state=Tk.NORMAL)
+            # self.debug_button.config(state=Tk.NORMAL)
             self.clr_svs_button.config(state=Tk.NORMAL)
             self.ard_preset_menu.config(state=Tk.NORMAL)
             self.min_entry.config(state=Tk.NORMAL)
@@ -1200,6 +1234,7 @@ class GUI(object):
         self.ALL = Tk.N+Tk.E+Tk.S+Tk.W
         self.hard_stop = False
         self.root.protocol('WM_DELETE_WINDOW', self.hard_exit)
+        self.root.wm_attributes("-topmost", 1)
 
     def hard_exit(self):
         """
@@ -1633,6 +1668,7 @@ class ArduinoGUI(GUI):
         self.data = {'starts': {}, 'middles': {}, 'ends': {}, 'hold': {}}
         self.types = None
         self.return_data = []
+        self.fields_validated = {}
 
     def entry_validate(self, pins=False, rows=None):
         """
@@ -1641,12 +1677,15 @@ class ArduinoGUI(GUI):
         entry, err_place_msg, arg_types = None, '', []
         row = int(rows)
         pin = None
-        action = self.close_gui
-        if self.close_gui:
-            self.close_gui = False
         if pins:
             pin = int(pins)
+        # If we request a close via confirm button, we do a final check
+        close_gui = self.close_gui
+        if self.close_gui:
+            # set to False so if check fails we don't get stuck in a loop
+            self.close_gui = False
         pin_ids = 0
+        ####################################################################
         if self.types == 'tone':
             pin_ids = 10
             entry = self.entries[row]
@@ -1666,6 +1705,7 @@ class ArduinoGUI(GUI):
             arg_types = ['Time On (s)', 'Time until Off (s)', 'Frequency (Hz)',
                          'Duty Cycle (%)', 'Phase Shift (deg)']
             err_place_msg = 'row [{:0>2}], pin [{:0>2}]'.format(row+1, pin_ids)
+        ####################################################################
         # Grab comma separated user inputs as a list
         inputs = entry.get().split(',')
         for i in range(len(inputs)):
@@ -1699,7 +1739,7 @@ class ArduinoGUI(GUI):
             return False
         # 2b. Exactly 0
         if len(inputs) == 0:
-            if action:
+            if close_gui:
                 self.close()
             return False
         # 3. Check input content are valid
@@ -1769,7 +1809,8 @@ class ArduinoGUI(GUI):
                                   'for frequencies <= 100 Hz.\n\n'
                                   'Use the TONE function or an'
                                   'external wave '
-                                  'generator instead.'.format(err_place_msg))
+                                  'generator instead.'.format(err_place_msg),
+                                  parent=self.root)
                     entry.focus()
                     return False
         except ValueError:
@@ -1791,6 +1832,8 @@ class ArduinoGUI(GUI):
         #       - OUTPUT Pins can always overlap. We just need to combine the time inputs
         #       - PWM Pins can overlap iff same [refr]; else raise error
         #       - Tone is one pin only. Only overlap if same [freq]
+        #
+        # ...because pwm is a special butterfly and needs extra steps:
         if self.types == 'pwm':
             pin_int = pin_to_int(pin_ids)
             (starts_l, middles_l, ends_l, hold_l) = (self.data['starts'],
@@ -1805,6 +1848,13 @@ class ArduinoGUI(GUI):
             (self.data['starts'], self.data['middles'],
              self.data['ends'], self.data['hold']) = (starts_l[pin_ids], middles_l[pin_ids],
                                                       ends_l[pin_ids], hold_l[pin_int])
+        # 4a.
+        # Before we validate entries further:
+        # If the validation is performed on a field that already had data validated
+        # e.g. due to edits
+        # we will need to remove its previous set of data first.
+        self.time_remove(rows, pins, refr)
+        # 4b. test for time overlaps
         try:
             self.data['starts'][refr], self.data['middles'][refr], self.data['ends'][refr]
         except KeyError:
@@ -1829,10 +1879,11 @@ class ArduinoGUI(GUI):
             tkMb.showinfo('Error!', 'Error in {}:\n\n'
                                     'Time intervals '
                                     'should not overlap for the same '
-                                    'pin!'.format(err_place_msg))
+                                    'pin!'.format(err_place_msg),
+                          parent=self.root)
             entry.focus()
             return False
-        # 4a. We've finished checking for validity.
+        # 4c. We've finished checking for validity.
         #     If the input reached this far, it's ready to be added
         self.data['middles'][refr] += range(on+1, on+off)
         front, back = 0, 0
@@ -1859,16 +1910,141 @@ class ArduinoGUI(GUI):
         else:
             self.data['starts'][refr].append(on)
             self.data['ends'][refr].append(on+off)
+        # Now we need to make sure this one comes out as an already validated field
+        if self.types == 'tone':
+            self.fields_validated[rows] = {'starts': on,
+                                           'middles': range(on+1, on+off),
+                                           'ends': on+off,
+                                           'hold': [on_ms, on_ms+off_ms],
+                                           'refr': refr}
+        elif self.types == 'output':
+            pin_int = pin_to_int(refr)
+            self.fields_validated[rows+pins] = {'starts': on,
+                                                'middles': range(on+1, on+off),
+                                                'ends': on+off,
+                                                'hold': {on_ms: pin_int, off_ms: pin_int},
+                                                'refr': refr}
+        elif self.types == 'pwm':
+            self.fields_validated[rows+pins] = {'starts': on,
+                                                'middles': range(on+1, on+off),
+                                                'ends': on+off,
+                                                'hold': [on_ms, on_ms+off_ms],
+                                                'refr': refr}
+        # again, pwm requires some extra work before we finish...
         if self.types == 'pwm':
             (self.data['starts'],
              self.data['middles'],
              self.data['ends'],
              self.data['hold']) = (starts_l, middles_l, ends_l, hold_l)
         # If all is well and we requested a close, we close the GUI
-        if action:
+        if close_gui:
             self.close()
         else:
             return True
+
+    def time_remove(self, rows, pins, refr):
+        """
+        Removes the indicated time segment
+        """
+        field = None
+        field_refr = None
+        if self.types == 'tone':
+            try:
+                self.fields_validated[rows]
+            except KeyError:
+                self.fields_validated[rows] = {'starts': -1, 'middles': [],
+                                               'ends': -1, 'hold': [], 'refr': refr}
+                return
+            field = self.fields_validated[rows]
+            field_refr = field['refr']
+        elif self.types in ['output', 'pwm']:
+            try:
+                self.fields_validated[rows+pins]
+            except KeyError:
+                self.fields_validated[rows+pins] = {'starts': -1, 'middles': [],
+                                                    'ends': -1, 'hold': [], 'refr': refr}
+                return
+            field = self.fields_validated[rows+pins]
+            field_refr = field['refr']
+        if self.types in ['tone', 'pwm']:
+            try:
+                # Check that the data exists at refr
+                self.data['starts'][field_refr], self.data['middles'][field_refr]
+                self.data['ends'][field_refr], self.data['hold'][field_refr]
+                # Remove Middles
+                for i in field['middles']:
+                    if i in self.data['middles'][field_refr]:
+                        self.data['middles'][field_refr].remove(i)
+                # Remove starts, ends, holds
+                if field['starts'] in self.data['starts'][field_refr]:
+                    self.data['starts'][field_refr].remove(field['starts'])
+                    self.data['hold'][field_refr].remove(field['starts']*1000)
+                elif field['starts'] in self.data['middles'][field_refr]:
+                    self.data['middles'][field_refr].remove(field['starts'])
+                    self.data['ends'][field_refr].append(field['starts'])
+                    self.data['hold'][field_refr].append(field['starts']*1000)
+                if field['ends'] in self.data['ends'][field_refr]:
+                    self.data['ends'][field_refr].remove(field['ends'])
+                    self.data['hold'][field_refr].remove(field['ends']*1000)
+                elif field['ends'] in self.data['middles'][field_refr]:
+                    self.data['middles'][field_refr].remove(field['ends'])
+                    self.data['starts'][field_refr].append(field['ends'])
+                    self.data['hold'][field_refr].append(field['ends']*1000)
+                # Set field to empty; we'll have to add back into it in the validate function
+                if self.types == 'tone':
+                    self.fields_validated[rows] = {'starts': -1, 'middles': [],
+                                                   'ends': -1, 'hold': [], 'refr': refr}
+                elif self.types == 'pwm':
+                    self.fields_validated[rows + pins] = {'starts': -1, 'middles': [],
+                                                          'ends': -1, 'hold': [], 'refr': refr}
+            except KeyError:
+                pass
+        elif self.types == 'output':
+            pin_int = pin_to_int(refr)
+            try:
+                self.data['starts'][field_refr], self.data['middles'][field_refr]
+                self.data['ends'][field_refr]
+                self.data['hold'][field['starts']*1000], self.data['hold'][field['ends']*1000]
+                # rm middles
+                for i in field['middles']:
+                    if i in self.data['middles'][field_refr]:
+                        self.data['middles'][field_refr].remove(i)
+                # rm s, e, h
+                if field['starts'] in self.data['starts'][field_refr]:
+                    self.data['starts'][field_refr].remove(field['starts'])
+                    if self.data['hold'][field['starts']*1000] == pin_int:
+                        self.data['hold'] = {key: self.data['hold'][key]
+                                             for key in self.data['hold']
+                                             if key != field['starts']*1000}
+                    else:
+                        self.data['hold'][field['starts']*1000] -= pin_int
+                elif field['starts'] in self.data['middles'][field_refr]:
+                    self.data['middles'][field_refr].remove(field['starts'])
+                    self.data['ends'][field_refr].append(field['starts'])
+                    if field['starts']*1000 in self.data['hold']:
+                        self.data['hold'][field['starts']*1000] += pin_int
+                    else:
+                        self.data['hold'][field['starts']*1000] = pin_int
+                if field['ends'] in self.data['ends'][field_refr]:
+                    self.data['ends'][field_refr].remove(field['ends'])
+                    if self.data['hold'][field['ends']*1000] == pin_int:
+                        self.data['hold'] = {key: self.data['hold'][key]
+                                             for key in self.data['hold']
+                                             if key != field['ends']*1000}
+                    else:
+                        self.data['hold'][field['ends']*1000] -= pin_int
+                elif field['ends'] in self.data['middles'][field_refr]:
+                    self.data['middles'][field_refr].remove(field['ends'])
+                    self.data['starts'][field_refr].append(field['ends'])
+                    if field['ends']*1000 in self.data['hold']:
+                        self.data['hold'][field['ends']*1000] += pin_int
+                    else:
+                        self.data['hold'][field['ends']*1000] = pin_int
+                # set field to empty
+                self.fields_validated[rows+pins] = {'starts': -1, 'middles': [],
+                                                    'ends': -1, 'hold': [], 'refr': refr}
+            except KeyError:
+                pass
 
     def time_combine(self, on_ms, off_ms, front, back, refr):
         """
@@ -2113,8 +2289,13 @@ class ArduinoGUI(GUI):
         self.closebutton.pack(side=Tk.TOP)
         # Finish GUI Setup
         scroll_frame.finalize()
-        self.root.geometry('980x280')
         self.center()
+        geometry = self.platform_geometry(windows='1000x400',
+                                          darwin='257x272')
+        if geometry:
+            self.root.geometry(geometry)
+        else:
+            pass
 
     def pwm_setup(self):
         """
@@ -2189,11 +2370,17 @@ class ArduinoGUI(GUI):
         self.center()
 
 
+#################################################################
+# Threaded Tasks
+# Tasks that run under the GUI and last more than 1s should
+# Be threaded to prevent GUI freezing
+###############################
+# Progress Bar
 class ProgressBar(threading.Thread):
     """
     Creates a dynamic progress bar
     """
-    def __init__(self, canvas, bar, time_gfx, ms_total_time):
+    def __init__(self, canvas, bar, time_gfx, ms_total_time,):
         threading.Thread.__init__(self)
         self.daemon = True
         self.canvas = canvas
@@ -2243,13 +2430,12 @@ class ProgressBar(threading.Thread):
         self.running = False
 
 
-#################################################################
 # Arduino Communication
 class ArduinoComm(threading.Thread):
     """
     Handles serial communication with arduino
     """
-    def __init__(self, status_var):
+    def __init__(self, status_var, queue):
         threading.Thread.__init__(self)
         self.daemon = True
         self.baudrate = 115200
@@ -2258,7 +2444,7 @@ class ArduinoComm(threading.Thread):
         self.start_marker, self.end_marker = 60, 62
         self.serial = None
         self.status_var = status_var
-        self.connected = True
+        self.queue = queue
 
     def send_to_ard(self, send_str):
         """
@@ -2291,24 +2477,24 @@ class ArduinoComm(threading.Thread):
         for each in args:
             for i in range(len(each)):
                 if len(each) > 0:
-                    get_str = self.get_from_ard()
-                    if get_str == 'M':
-                        self.send_to_ard(pack(*each[i]))
+                    try:
+                        get_str = self.get_from_ard()
+                        if get_str == 'M':
+                            self.send_to_ard(pack(*each[i]))
+                    except TypeError:
+                        raise serial.serialutil.SerialException
 
     def run(self):
         """
         Tries every possible serial port
         """
-        self.connected = 'none'
         ports = list_serial_ports()
-        self.status_var.set('Attempting Port '
+        self.status_var.set('Connecting to Port '
                             '[{}]...'.format(self.ser_port))
         time.sleep(1)
         connected = self.try_serial(self.ser_port)
         if connected:
-            self.status_var.set('Successfully Connected to Port '
-                                '[{}]!'.format(self.ser_port))
-            self.connected = True
+            self.queue.put('Success')
             return
         elif not connected:
             for port in ports:
@@ -2317,13 +2503,11 @@ class ArduinoComm(threading.Thread):
                 if self.try_serial(port):
                     self.ser_port = port
                     dirs.settings.ser_port = port
-                    self.status_var.set('Successfully Connected to Port '
-                                        '[{}]!'.format(port))
-                    self.connected = True
+                    self.queue.put('Success')
                     return
             self.status_var.set('Failed to Connect to Arduino! '
                                 'Please make sure the device is plugged in.')
-            self.connected = False
+            self.queue.put('Failed')
             return
 
     def wait_for(self):
@@ -2360,7 +2544,7 @@ class ArduinoComm(threading.Thread):
         except (serial.SerialException, IOError):
             return False
 
-    def reset(self, message=False):
+    def reset(self, message=''):
         """
         Resets serial connection
         Useful for flushing
@@ -2368,7 +2552,7 @@ class ArduinoComm(threading.Thread):
         self.serial.setDTR(False)
         time.sleep(0.022)
         self.serial.setDTR(True)
-        if message is not False:
+        if message != '':
             self.status_var.set(message)
 
 
@@ -2380,7 +2564,8 @@ class Directories(object):
     .frcl: Main Settings Pickle
     .csv: Standard comma separated file for data output
     """
-    def __init__(self):
+    def __init__(self, root):
+        self.root = root
         self.user_home = os.path.expanduser('~')
         self.main_save_dir = self.user_home+'/desktop/frCntrlSaves/'
         self.results_dir = ''
@@ -2420,13 +2605,15 @@ class Directories(object):
                          'It should be used for '
                          'debugging purposes only.\n\n'
                          'Are you sure?',
-                         default='no'):
+                         default='no',
+                         parent=self.root):
             shutil.rmtree(self.user_home+'/desktop/frCntrlSaves/')
             os.remove(self.user_home+'/frSettings.frcl')
             time.sleep(0.5)
             tkMb.showinfo('Finished',
                           'All Settings and Save Directories Deleted.\n'
-                          'Program will now exit.')
+                          'Program will now exit.',
+                          parent=self.root)
             SAVE_ON_EXIT = False
             root_reference.destroy()
             root_reference.quit()
@@ -2543,16 +2730,22 @@ class MainSettings(object):
 
 #################################################################
 #################################################################
-# Main Program
-# Setup all Directories and load Last Used Settings
-dirs = Directories()
-dirs.load()
+if __name__ == '__main__':
 
-# Run Main Loop
-main = MasterGUI(Tk.Tk())
-main.master.mainloop()
+    # Open Tkinter instance
+    tcl_root = Tk.Tk()
 
-# Save Settings for Next Run
-if SAVE_ON_EXIT:
-    dirs.save()
+    # Setup all Directories
+    dirs = Directories(tcl_root)
+
+    # Load last used settings
+    dirs.load()
+
+    # Run Main Loop
+    main = MasterGUI(tcl_root)
+    main.master.mainloop()
+
+    # Save Settings for Next Run
+    if SAVE_ON_EXIT:
+        dirs.save()
 #################################################################
