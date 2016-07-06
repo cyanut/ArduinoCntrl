@@ -114,6 +114,7 @@ void setup(){
    DDRB = 255;
    PORTD = B0;
    PORTB = B0;
+   digitalWrite(13,LOW);
   //READY TO BEGIN RECEIVING DATA
   Serial.println("<Arduino is ready>>");
   //#######################################
