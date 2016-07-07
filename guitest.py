@@ -19,13 +19,6 @@ import shutil
 # noinspection PyUnresolvedReferences
 import sys
 
-import matplotlib
-matplotlib.use('TkAgg')
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-import matplotlib.animation as animation
-from matplotlib import style
-style.use('ggplot')
 import numpy as np
 import Tkinter as Tk
 import tkMessageBox as tkMb
@@ -33,19 +26,21 @@ import tkFont
 import Pmw
 import LabJackPython
 import u6
-# import flycapture2a as fc2
+import flycapture2a as fc2
 
 ################################################################
 # To do list:
 # - Arduino GUI Geometry fine tuning
 # - Arduino optiboot.c loader: remove led flash on start?
+# - Debugging of everything that could go wrong
+# - adding start/stop conditionals for camera
+# - correct status messages for every device for every stage
 #################################################################
-# MatPlotLib Config
-matplotlib.rcParams.update({'font.size': 8})
 # Global Variables
 NUM_LJ_CH = 14
 SAVE_ON_EXIT = True
-TIME_OFFSET = 3600*4  # EST = -4 hours.
+TIME_OFFSET = 3600 * 4  # EST = -4 hours.
+
 
 # Misc. Functions
 def min_from_sec(secs, ms=False, option=None):
@@ -59,9 +54,9 @@ def min_from_sec(secs, ms=False, option=None):
     """
     output = None
     sec = int(secs) % 60
-    mins = int(secs)//60
+    mins = int(secs) // 60
     if ms:
-        millis = int((secs - int(secs))*1000)
+        millis = int((secs - int(secs)) * 1000)
         output = '{:0>2}:{:0>2}.{:0>3}'.format(mins, sec, millis)
     elif not ms:
         output = '{:0>2}:{:0>2}'.format(mins, sec)
@@ -78,11 +73,11 @@ def get_time_diff(start_time, end_time=None, choice='ms'):
     """
     if end_time is None:
         end_time = datetime.now()
-    timediff = (end_time-start_time)
+    timediff = (end_time - start_time)
     if choice == 'ms':
-        return timediff.seconds*1000+timediff.microseconds/1000
+        return timediff.seconds * 1000 + timediff.microseconds / 1000
     elif choice == 'us':
-        return timediff.seconds*1000+float(timediff.microseconds)/1000
+        return timediff.seconds * 1000 + float(timediff.microseconds) / 1000
 
 
 def get_day(options=0):
@@ -104,11 +99,11 @@ def get_day(options=0):
         return '%s-%s-%s' % (i.year, i.month, i.day)
     elif options == 3 or options == 'time':
         if i.hour > 12:
-            hour = str(i.hour-12)+'pm'
+            hour = str(i.hour - 12) + 'pm'
         if i.hour == 12:
             hour = '12pm'
         if i.hour < 12:
-            hour = str(i.hour)+'am'
+            hour = str(i.hour) + 'am'
         if i.hour == 0:
             hour = '12am'
         return '%s-%s-%s' % (hour, minute, second)
@@ -143,7 +138,7 @@ def deep_copy_lists(outer, inner):
     """
     hold = []
     for i in range(outer):
-        hold.append(copy.deepcopy([copy.deepcopy([])]*inner))
+        hold.append(copy.deepcopy([copy.deepcopy([])] * inner))
     return hold
 
 
@@ -154,7 +149,7 @@ def limit_string_length(string, length):
     if len(string) <= length:
         return string
     else:
-        return string[:length-3]+'...'
+        return string[:length - 3] + '...'
 
 
 def list_serial_ports():
@@ -210,9 +205,10 @@ class MasterGUI(object):
     """
     Main Program GUI. Launch everything from here
     """
+
     def __init__(self, master):
-        self.master = master
         self.single_widget_dim = 100
+        self.master = master
         self.master.title('Fear Control')
         self.master.resizable(width=False, height=False)
         self.time_label_font = tkFont.Font(family='Arial', size=8)
@@ -228,29 +224,42 @@ class MasterGUI(object):
         self.master.protocol('WM_DELETE_WINDOW', self.hard_exit)
         # Threading control and devices
         self.master_queue = Queue.Queue()
+        # some threading locks
+        self.exp_lock = threading.Event()
+        self.exp_lock.clear()
+        self.read_lock = threading.Event()
+        self.read_lock.clear()
+        # devices
         self.ard_queue = Queue.Queue()
         self.ard_ser = None
         self.lj_queue = Queue.Queue()
         self.lj_instance = None
         self.lj_connected = False
         self.lj_device = None
+        self.cmr_queue = Queue.Queue()
+        self.camera = None
+        self.cmr_connected = False
+        ########################################
+        # progress bar components
+        self.prog_is_running = False
+        self.start_prog = None
+        self.num_prog, self.num_time = 1, 1
+        self.time_diff = 0
         #########################################
         # Give each setup GUI its own box
-        #########################################
         self.render_photometry()
-        self.render_save_config()
-        self.render_lj_config()
-        self.render_arduino_config()
+        self.render_saves()
+        self.render_lj()
+        self.render_arduino()
         self.gui_update_window()
 
-    # Main GUI Setup
+    # GUI setup
     def render_photometry(self):
-        """
-        sets up photometry GUI
-        """
+        """photometry gui setup"""
+        # Frame
         photometry_frame = Tk.LabelFrame(self.master,
                                          text='Optional Photometry Config.',
-                                         width=self.single_widget_dim*2,
+                                         width=self.single_widget_dim * 2,
                                          height=self.single_widget_dim,
                                          highlightthickness=5)
         photometry_frame.grid(row=0, column=0, sticky=self.ALL)
@@ -273,15 +282,13 @@ class MasterGUI(object):
         self.start_gui_button.config(state='disabled')
         Tk.Label(photometry_frame, textvariable=self.fp_str_var).pack()
 
-    def render_save_config(self):
-        """
-        renders output save config GUI
-        """
+    def render_saves(self):
+        """save gui setup"""
         self.save_grab_list()
         # Primary Save Frame
         save_frame = Tk.LabelFrame(self.master,
                                    text='Data Output Save Location',
-                                   width=self.single_widget_dim*2,
+                                   width=self.single_widget_dim * 2,
                                    height=self.single_widget_dim,
                                    highlightthickness=5,
                                    highlightcolor='white')
@@ -306,7 +313,7 @@ class MasterGUI(object):
         if len(self.save_dir_list) == 0:
             self.save_dir_menu = Tk.OptionMenu(existing_frame,
                                                self.dir_chosen,
-                                               ' '*15)
+                                               ' ' * 15)
         else:
             self.save_dir_menu = Tk.OptionMenu(existing_frame,
                                                self.dir_chosen,
@@ -326,14 +333,12 @@ class MasterGUI(object):
                                          self.save_button_options(new=True))
         self.new_save_button.pack(side=Tk.TOP)
 
-    def render_lj_config(self):
-        """
-        labjack gui config
-        """
+    def render_lj(self):
+        """render lj config gui"""
         # Frame
         lj_frame = Tk.LabelFrame(self.master,
                                  text='LabJack Config.',
-                                 width=self.single_widget_dim*2,
+                                 width=self.single_widget_dim * 2,
                                  height=self.single_widget_dim,
                                  highlightthickness=5)
         lj_frame.grid(row=2, column=0, sticky=self.ALL)
@@ -352,37 +357,19 @@ class MasterGUI(object):
                                           text='CONFIG',
                                           command=self.lj_config)
         self.lj_config_button.pack(side=Tk.BOTTOM, expand=True)
-        ############
-        # LabJack live stream plot
-        matplot_frame = Tk.LabelFrame(self.master, text='LabJack Live Stream')
-        matplot_frame.grid(row=4, column=0, columnspan=2, sticky=self.ALL)
-        # Matplotlib figure
-        self.lj_plot = Figure(figsize=(6, 3), dpi=100, facecolor='#efefef')
-        self.lj_plot.add_subplot(111).set_xlabel('Time (s)')
-        self.lj_plot.add_subplot(111).set_ylabel('Signal (V)')
-        self.lj_plot.add_subplot(111).set_ylim([0, 5])
-        self.lj_plot.tight_layout()
-        # Matplotlib canvas
-        matplot_canvas = FigureCanvasTkAgg(self.lj_plot, matplot_frame)
-        matplot_canvas.show()
-        matplot_canvas.get_tk_widget().pack(side=Tk.TOP, fill=Tk.BOTH, expand=True)
 
-    def render_arduino_config(self):
-        """
-        arduino and progress bar gui setup
-        and various debug functions
-        """
+    def render_arduino(self):
+        """Arduino Config"""
         # Frame
         self.ard_preset_list = []
         self.ard_bckgrd_height = 260
         ard_frame = Tk.LabelFrame(self.master,
                                   text='Arduino Stimuli Config.',
-                                  width=self.single_widget_dim*11,
+                                  width=self.single_widget_dim * 11,
                                   height=self.ard_bckgrd_height)
         ard_frame.grid(row=0,
                        rowspan=3,
                        column=1,
-                       columnspan=2,
                        sticky=self.ALL)
         Tk.Label(ard_frame,
                  text='Last used settings shown. '
@@ -402,7 +389,7 @@ class MasterGUI(object):
         # Main Progress Canvas
         self.ard_canvas = Tk.Canvas(ard_frame,
                                     width=1050,
-                                    height=self.ard_bckgrd_height+10)
+                                    height=self.ard_bckgrd_height + 10)
         self.ard_canvas.grid(row=1,
                              column=0,
                              columnspan=100)
@@ -416,7 +403,7 @@ class MasterGUI(object):
                           stick=self.ALL)
         self.prog_off = Tk.Button(ard_frame,
                                   text='STOP')
-        self.prog_off.grid(row=bs_row+1,
+        self.prog_off.grid(row=bs_row + 1,
                            column=4,
                            stick=self.ALL)
         # Grab Data and Generate Progress Bar
@@ -445,24 +432,24 @@ class MasterGUI(object):
         Tk.Label(ard_frame, text='SS',
                  font=self.time_label_font).grid(row=ts_row, column=3, sticky=self.ALL)
         Tk.Label(ard_frame,
-                 text='Total Experiment Time:').grid(row=ts_row+1,
+                 text='Total Experiment Time:').grid(row=ts_row + 1,
                                                      column=0,
                                                      sticky=self.ALL)
         # Minutes
         self.min_entry = Tk.Entry(ard_frame, width=2)
-        self.min_entry.grid(row=ts_row+1, column=1, sticky=self.ALL)
+        self.min_entry.grid(row=ts_row + 1, column=1, sticky=self.ALL)
         self.min_entry.insert(Tk.END,
-                              '{}'.format(min_from_sec(self.ttl_time/1000, option='min')))
-        Tk.Label(ard_frame, text=':').grid(row=ts_row+1, column=2, sticky=self.ALL)
+                              '{}'.format(min_from_sec(self.ttl_time / 1000, option='min')))
+        Tk.Label(ard_frame, text=':').grid(row=ts_row + 1, column=2, sticky=self.ALL)
         # Seconds
         self.sec_entry = Tk.Entry(ard_frame, width=2)
-        self.sec_entry.grid(row=ts_row+1, column=3, sticky=self.ALL)
+        self.sec_entry.grid(row=ts_row + 1, column=3, sticky=self.ALL)
         self.sec_entry.insert(Tk.END,
-                              '{}'.format(min_from_sec(self.ttl_time/1000,
+                              '{}'.format(min_from_sec(self.ttl_time / 1000,
                                                        option='sec')))
         self.ard_time_confirm = Tk.Button(ard_frame, text='Confirm',
                                           command=self.ard_get_time)
-        self.ard_time_confirm.grid(row=ts_row+1, column=4, sticky=Tk.W)
+        self.ard_time_confirm.grid(row=ts_row + 1, column=4, sticky=Tk.W)
         # Tone Config
         self.tone_setup = Tk.Button(ard_frame, text='Tone Setup',
                                     command=lambda types='tone':
@@ -522,11 +509,24 @@ class MasterGUI(object):
                                                                              lj_status_display))
         self.lj_toggle_button.grid(row=0, column=72, sticky=Tk.E)
         # Camera
+        self.cmr_status = Tk.StringVar()
+        Tk.Label(ard_frame, anchor=Tk.E, text='Camera Status: ').grid(row=6, column=10,
+                                                                      columnspan=15, sticky=self.ALL)
+        cmr_status_display = Tk.Label(ard_frame, anchor=Tk.W, textvariable=self.cmr_status,
+                                      relief=Tk.SUNKEN)
+        cmr_status_display.grid(row=6, column=25, columnspan=70, sticky=self.ALL)
+        self.cmr_status.set('null')
         self.cmr_toggle_var = Tk.IntVar()
         self.cmr_toggle_var.set(1)
         self.cmr_toggle_button = Tk.Checkbutton(ard_frame, variable=self.cmr_toggle_var, text='Camera',
-                                                onvalue=1, offvalue=0)
+                                                onvalue=1, offvalue=0,
+                                                command=lambda:
+                                                self.device_status_msg_toggle(self.cmr_toggle_var,
+                                                                              self.cmr_status,
+                                                                              cmr_status_display))
         self.cmr_toggle_button.grid(row=0, column=74, sticky=Tk.E)
+
+    def render_camera
 
     # General GUI Functions
     def gui_canvas_init(self):
@@ -636,10 +636,10 @@ class MasterGUI(object):
         """
         Under the hood stuff here
         """
-        print '#'*40+'DEBUG\n\n'
+        print '#' * 40 + 'DEBUG\n\n'
         print 'SETTINGS'
         pprint(vars(dirs.settings))
-        print '#'*15
+        print '#' * 15
         print 'ACTIVE THREADS'
         print threading.active_count()
 
@@ -647,7 +647,56 @@ class MasterGUI(object):
         """
         Handles threads first before exiting for a clean close
         """
+        lj_error, cmr_error = False, False
         if allow:
+            # Make sure LabJack is closed
+            try:
+                main.lj_device.streamStop()
+                main.lj_device.close()
+                print 'LJ Closed 1'
+            except LabJackPython.LabJackException:
+                try:
+                    main.lj_device.close()
+                    main.lj_device.streamStop()
+                    print 'LJ Closed 2'
+                except LabJackPython.LabJackException:
+                    try:
+                        main.lj_device.close()
+                        print 'LJ Closed 3'
+                    except LabJackPython.LabJackException:
+                        lj_error = True
+            except AttributeError:
+                pass
+            # ... and camera
+            try:
+                main.camera.close()
+                print 'Camera Closed'
+            except fc2.ApiError:
+                pass
+                cmr_error = True
+            except AttributeError:
+                pass
+            if lj_error and cmr_error:
+                tkMb.showwarning('Warning!',
+                                 'Neither the LabJack nor the Camera could be closed '
+                                 'properly. This will cause issues on '
+                                 'the next run.\n\n'
+                                 'You may wish to manually disconnect and '
+                                 'reconnect the devices for a hard reset.')
+            elif lj_error:
+                tkMb.showwarning('Warning!',
+                                 'The LabJack could not be closed '
+                                 'properly. This will cause issues on '
+                                 'the next run.\n\n'
+                                 'You may wish to manually disconnect and '
+                                 'reconnect the device for a hard reset.')
+            elif cmr_error:
+                tkMb.showwarning('Warning!',
+                                 'The Camera could not be closed '
+                                 'properly. This will cause issues on '
+                                 'the next run.\n\n'
+                                 'You may wish to manually disconnect and '
+                                 'reconnect the device for a hard reset.')
             self.master.destroy()
             self.master.quit()
         else:
@@ -672,7 +721,11 @@ class MasterGUI(object):
                 success_msg.remove(queue_msg)
                 if len(success_msg) == 0:
                     if success_fn is not None:
-                        success_fn()
+                        if success_fn == 'RunProg>>':
+                            self.progbar.start()
+                            self.run_bulk_toggle(running=False)
+                        else:
+                            success_fn()
                     else:
                         self.master_queue.put(queue_msg)
                 else:
@@ -717,7 +770,7 @@ class MasterGUI(object):
         """
         self.save_dir_list = [d for d
                               in os.listdir(dirs.main_save_dir)
-                              if os.path.isdir(dirs.main_save_dir+d)]
+                              if os.path.isdir(dirs.main_save_dir + d)]
 
     def save_button_options(self, inputs=None, new=False):
         """
@@ -755,9 +808,9 @@ class MasterGUI(object):
             self.dir_chosen.set(inputs)
             self.save_dir_to_use = str(self.dir_chosen.get())
         if ready == 1:
-            self.preresults_dir = str(dirs.main_save_dir)+self.save_dir_to_use+'/'
+            self.preresults_dir = str(dirs.main_save_dir) + self.save_dir_to_use + '/'
             if self.preresults_dir not in self.results_dir_used:
-                dirs.results_dir = self.preresults_dir+'{} at [{}]/'.format(get_day(2), get_day(3))
+                dirs.results_dir = self.preresults_dir + '{} at [{}]/'.format(get_day(2), get_day(3))
                 self.make_save_dir = 1
             else:
                 dirs.results_dir = self.results_dir_used[self.preresults_dir]
@@ -859,7 +912,7 @@ class MasterGUI(object):
             # Grab Inputs
             mins = int(self.min_entry.get().strip())
             secs = int(self.sec_entry.get().strip())
-            mins += secs//60
+            mins += secs // 60
             secs %= 60
             # Update Fields if improper format entered
             self.min_entry.delete(0, Tk.END)
@@ -867,7 +920,7 @@ class MasterGUI(object):
             self.sec_entry.delete(0, Tk.END)
             self.sec_entry.insert(Tk.END, '{:0>2}'.format(secs))
             # Update Vairbales
-            self.ttl_time = (mins*60+secs)*1000
+            self.ttl_time = (mins * 60 + secs) * 1000
             dirs.settings.ard_last_used['packet'][3] = self.ttl_time
             self.ard_grab_data(destroy=True)
         except ValueError:
@@ -890,7 +943,7 @@ class MasterGUI(object):
             # Then load must be a preset name.
             dirs.settings.ard_last_used = copy.deepcopy(dirs.settings.ard_presets[load])
             # Update Total Time Fields
-            last_used_time = dirs.settings.ard_last_used['packet'][3]/1000
+            last_used_time = dirs.settings.ard_last_used['packet'][3] / 1000
             self.min_entry.delete(0, Tk.END)
             self.sec_entry.delete(0, Tk.END)
             self.min_entry.insert(Tk.END, '{}'.format(min_from_sec(last_used_time,
@@ -915,111 +968,111 @@ class MasterGUI(object):
                 self.ard_canvas.delete(i)
         self.ard_data = ArduinoGUI(Tk.Toplevel())
         self.ard_data.root.destroy()
-        divisor = 5+5*int(self.ard_data.packet[3]/300000)
-        segment = float(self.ard_data.packet[3]/1000)/divisor
-        self.v_bars = [[]]*(1+int(round(segment)))
-        self.bar_times = [[]]*(1+int(round(segment)))
+        divisor = 5 + 5 * int(self.ard_data.packet[3] / 300000)
+        segment = float(self.ard_data.packet[3] / 1000) / divisor
+        self.v_bars = [[]] * (1 + int(round(segment)))
+        self.bar_times = [[]] * (1 + int(round(segment)))
         for i in range(int(round(segment))):
             if i > 0:
                 if i % 2 != 0:
-                    self.v_bars[i] = self.ard_canvas.create_rectangle(i*(1000.0/segment)-1,
+                    self.v_bars[i] = self.ard_canvas.create_rectangle(i * (1000.0 / segment) - 1,
                                                                       15,
-                                                                      i*(1000.0/segment)+1,
-                                                                      self.ard_bckgrd_height-5,
+                                                                      i * (1000.0 / segment) + 1,
+                                                                      self.ard_bckgrd_height - 5,
                                                                       fill='white')
                 if i % 2 == 0:
-                    self.v_bars[i] = self.ard_canvas.create_rectangle(i*(1000.0/segment)-1,
+                    self.v_bars[i] = self.ard_canvas.create_rectangle(i * (1000.0 / segment) - 1,
                                                                       15,
-                                                                      i*(1000.0/segment)+1,
+                                                                      i * (1000.0 / segment) + 1,
                                                                       self.ard_bckgrd_height,
                                                                       fill='white')
-                    self.bar_times[i] = self.ard_canvas.create_text(i*(1000.0/segment),
-                                                                    self.ard_bckgrd_height+8,
-                                                                    text=min_from_sec(divisor*i),
+                    self.bar_times[i] = self.ard_canvas.create_text(i * (1000.0 / segment),
+                                                                    self.ard_bckgrd_height + 8,
+                                                                    text=min_from_sec(divisor * i),
                                                                     fill='black',
                                                                     font=self.time_label_font)
-                if i == int(round(segment))-1 and (i+1) % 2 == 0 and (i+1)*(1000.0/segment) <= 1001:
-                    if round((i+1)*(1000.0/segment)) != 1000.0:
-                        self.v_bars[i+1] = self.ard_canvas.create_rectangle((i+1)*(1000.0/segment)-1,
-                                                                            15,
-                                                                            (i+1)*(1000.0/segment)+1,
-                                                                            self.ard_bckgrd_height,
-                                                                            fill='white')
-                    elif round((i+1)*(1000.0/segment)) == 1000:
-                        self.v_bars[i+1] = self.ard_canvas.create_rectangle((i+1)*(1000.0/segment)-1,
-                                                                            self.ard_bckgrd_height-5,
-                                                                            (i+1)*(1000.0/segment)+1,
-                                                                            self.ard_bckgrd_height,
-                                                                            fill='white')
-                    self.bar_times[i+1] = self.ard_canvas.create_text((i+1)*(1000.0/segment),
-                                                                      self.ard_bckgrd_height+8,
-                                                                      text=min_from_sec(divisor*(i+1)),
-                                                                      fill='black',
-                                                                      font=self.time_label_font)
-                if i == int(round(segment))-1 and (i+1) % 2 != 0 and (i+1)*(1000.0/segment) <= 1001:
-                    if round((i+1)*(1000.0/segment)) != 1000.0:
-                        self.v_bars[i+1] = self.ard_canvas.create_rectangle((i+1)*(1000.0/segment)-1,
-                                                                            15,
-                                                                            (i+1)*(1000.0/segment)+1,
-                                                                            self.ard_bckgrd_height,
-                                                                            fill='white')
-                    elif round((i+1)*(1000.0/segment)) == 1000:
-                        self.v_bars[i+1] = self.ard_canvas.create_rectangle((i+1)*(1000.0/segment)-1,
-                                                                            self.ard_bckgrd_height-5,
-                                                                            (i+1)*(1000.0/segment)+1,
-                                                                            self.ard_bckgrd_height,
-                                                                            fill='white')
+                if i == int(round(segment)) - 1 and (i + 1) % 2 == 0 and (i + 1) * (1000.0 / segment) <= 1001:
+                    if round((i + 1) * (1000.0 / segment)) != 1000.0:
+                        self.v_bars[i + 1] = self.ard_canvas.create_rectangle((i + 1) * (1000.0 / segment) - 1,
+                                                                              15,
+                                                                              (i + 1) * (1000.0 / segment) + 1,
+                                                                              self.ard_bckgrd_height,
+                                                                              fill='white')
+                    elif round((i + 1) * (1000.0 / segment)) == 1000:
+                        self.v_bars[i + 1] = self.ard_canvas.create_rectangle((i + 1) * (1000.0 / segment) - 1,
+                                                                              self.ard_bckgrd_height - 5,
+                                                                              (i + 1) * (1000.0 / segment) + 1,
+                                                                              self.ard_bckgrd_height,
+                                                                              fill='white')
+                    self.bar_times[i + 1] = self.ard_canvas.create_text((i + 1) * (1000.0 / segment),
+                                                                        self.ard_bckgrd_height + 8,
+                                                                        text=min_from_sec(divisor * (i + 1)),
+                                                                        fill='black',
+                                                                        font=self.time_label_font)
+                if i == int(round(segment)) - 1 and (i + 1) % 2 != 0 and (i + 1) * (1000.0 / segment) <= 1001:
+                    if round((i + 1) * (1000.0 / segment)) != 1000.0:
+                        self.v_bars[i + 1] = self.ard_canvas.create_rectangle((i + 1) * (1000.0 / segment) - 1,
+                                                                              15,
+                                                                              (i + 1) * (1000.0 / segment) + 1,
+                                                                              self.ard_bckgrd_height,
+                                                                              fill='white')
+                    elif round((i + 1) * (1000.0 / segment)) == 1000:
+                        self.v_bars[i + 1] = self.ard_canvas.create_rectangle((i + 1) * (1000.0 / segment) - 1,
+                                                                              self.ard_bckgrd_height - 5,
+                                                                              (i + 1) * (1000.0 / segment) + 1,
+                                                                              self.ard_bckgrd_height,
+                                                                              fill='white')
         self.tone_data, self.out_data, self.pwm_data = -1, -1, -1
         self.tone_bars = []
         if len(self.ard_data.tone_pack) != 0:
             self.tone_data = self.ard_decode_data('tone', self.ard_data.tone_pack)
-            self.tone_bars = [[]]*len(self.tone_data)
+            self.tone_bars = [[]] * len(self.tone_data)
             for i in range(len(self.tone_data)):
                 self.tone_bars[i] = self.ard_canvas.create_rectangle(self.tone_data[i][0],
-                                                                     0+15,
-                                                                     self.tone_data[i][1]+self.tone_data[i][0],
+                                                                     0 + 15,
+                                                                     self.tone_data[i][1] + self.tone_data[i][0],
                                                                      35, fill='yellow', outline='blue')
                 self.balloon.tagbind(self.ard_canvas,
                                      self.tone_bars[i],
                                      '{} - {}\n{} Hz'.format(
                                          min_from_sec(
-                                             self.tone_data[i][4]/1000),
+                                             self.tone_data[i][4] / 1000),
                                          min_from_sec(
-                                             self.tone_data[i][5]/1000),
+                                             self.tone_data[i][5] / 1000),
                                          self.tone_data[i][3]))
         self.out_bars = []
         if len(self.ard_data.out_pack) != 0:
             pin_ids = range(2, 8)
             self.out_data = self.ard_decode_data('output',
                                                  self.ard_data.out_pack)
-            self.out_bars = [[]]*len(self.out_data)
+            self.out_bars = [[]] * len(self.out_data)
             for i in range(len(self.out_data)):
-                y_pos = 35+(pin_ids.index(self.out_data[i][3]))*20
+                y_pos = 35 + (pin_ids.index(self.out_data[i][3])) * 20
                 self.out_bars[i] = self.ard_canvas.create_rectangle(self.out_data[i][0],
                                                                     y_pos,
-                                                                    self.out_data[i][1]+self.out_data[i][0],
-                                                                    y_pos+20,
+                                                                    self.out_data[i][1] + self.out_data[i][0],
+                                                                    y_pos + 20,
                                                                     fill='yellow', outline='blue')
                 self.balloon.tagbind(self.ard_canvas,
                                      self.out_bars[i],
                                      '{} - {}\nPin {}'.format(
                                          min_from_sec(
-                                             self.out_data[i][4]/1000),
+                                             self.out_data[i][4] / 1000),
                                          min_from_sec(
-                                             self.out_data[i][5]/1000),
+                                             self.out_data[i][5] / 1000),
                                          self.out_data[i][3]))
         self.pwm_bars = []
         if len(self.ard_data.pwm_pack) != 0:
             pin_ids = range(8, 14)
             pin_ids.remove(10)
             self.pwm_data = self.ard_decode_data('pwm', self.ard_data.pwm_pack)
-            self.pwm_bars = [[]]*len(self.pwm_data)
+            self.pwm_bars = [[]] * len(self.pwm_data)
             for i in range(len(self.pwm_data)):
-                y_pos = 155+(pin_ids.index(self.pwm_data[i][3]))*20
+                y_pos = 155 + (pin_ids.index(self.pwm_data[i][3])) * 20
                 self.pwm_bars[i] = self.ard_canvas.create_rectangle(self.pwm_data[i][0],
                                                                     y_pos,
-                                                                    self.pwm_data[i][1]+self.pwm_data[i][0],
-                                                                    y_pos+20,
+                                                                    self.pwm_data[i][1] + self.pwm_data[i][0],
+                                                                    y_pos + 20,
                                                                     fill='yellow', outline='blue')
                 self.balloon.tagbind(self.ard_canvas,
                                      self.pwm_bars[i],
@@ -1027,9 +1080,9 @@ class MasterGUI(object):
                                       'Pin {}\n'
                                       'Freq: {}Hz\n'
                                       'Duty Cycle: {}%\n'
-                                      'Phase Shift: {}'+u'\u00b0').format(
-                                         min_from_sec(self.pwm_data[i][7]/1000),
-                                         min_from_sec(self.pwm_data[i][8]/1000),
+                                      'Phase Shift: {}' + u'\u00b0').format(
+                                         min_from_sec(self.pwm_data[i][7] / 1000),
+                                         min_from_sec(self.pwm_data[i][8] / 1000),
                                          self.pwm_data[i][3],
                                          self.pwm_data[i][4],
                                          self.pwm_data[i][5],
@@ -1052,7 +1105,7 @@ class MasterGUI(object):
         """
         Read packed up Arduino Data and puts it in proper format
         """
-        time_seg = float(self.ard_data.packet[3])/1000
+        time_seg = float(self.ard_data.packet[3]) / 1000
         if name == 'tone':
             start, on = 1, 2
         elif name == 'pwm':
@@ -1076,18 +1129,18 @@ class MasterGUI(object):
                     if n % 2 == 0:
                         final_intv.append([i,
                                            trig_times[i][n],
-                                           trig_times[i][n+1]])
+                                           trig_times[i][n + 1]])
             final_intv = sorted(final_intv,
                                 key=itemgetter(1))
             data_source = final_intv
         ard_data = []
         for i in data_source:
-            start_space = (float(i[start])/time_seg)
-            on_space = float(i[on])/time_seg-start_space
+            start_space = (float(i[start]) / time_seg)
+            on_space = float(i[on]) / time_seg - start_space
             if on_space == 0:
                 start_space -= 1
                 on_space = 1
-            off_space = 1000-on_space-start_space
+            off_space = 1000 - on_space - start_space
             if name == 'tone':
                 ard_data.append([start_space,
                                  on_space,
@@ -1114,7 +1167,6 @@ class MasterGUI(object):
                                  i[on]])
         return ard_data
 
-    # Progress Bar Functions
     def progbar_run(self):
         """
         Check if valid settings, make directories, and start progress bar
@@ -1129,17 +1181,32 @@ class MasterGUI(object):
         #   first we setup Arduino...
         if self.ard_toggle_var.get() == 1:
             self.ard_ser = ArduinoComm(self.ard_queue)
-        #   ... and LabJack
+        # ... and LabJack
         if self.lj_toggle_var.get() == 1:
             if not self.lj_connected:
                 try:
-                    self.lj_device = LJU6()
+                    self.lj_device = LJU6(exp_lock=self.exp_lock,
+                                          read_lock=self.read_lock,
+                                          report_queue=self.lj_queue)
                     self.lj_connected = True
                 except (LabJackPython.LabJackException, LabJackPython.NullHandleException):
                     self.lj_status.set('** LabJack is not connected or '
                                        'is occupied by another program. '
                                        'Please reconnect the device.')
+                    return
             self.lj_instance = LabJackComm(self.lj_queue, self.lj_device)
+        if self.cmr_toggle_var.get() == 1:
+            if not self.cmr_connected:
+                try:
+                    self.camera = FireFly(exp_lock=self.exp_lock,
+                                          report_queue=self.cmr_queue)
+                    self.cmr_connected = True
+                    self.cmr_status.set('Connected to Camera!')
+                except fc2.ApiError:
+                    self.cmr_status.set('** Camera is not connected or '
+                                        'is occupied by another program.'
+                                        ' Please disconnect and try again.')
+                    return
         # Thread Queues
         self.master_queue.queue.clear()
         self.ard_queue.queue.clear()
@@ -1151,6 +1218,8 @@ class MasterGUI(object):
             self.ard_ser.start()
         if self.lj_toggle_var.get() == 1:
             self.lj_instance.start()
+        if self.cmr_toggle_var.get() == 1:
+            self.cmr_status.set('Ready')
         # Process the queues from device threads to see if we succeeded in connecting
         main_queue_success_msg = []
         main_queue_fail_msg = []
@@ -1190,16 +1259,24 @@ class MasterGUI(object):
                 self.ard_ser.reset()
             except AttributeError:
                 pass
+            self.ard_status.set('Terminated')
+        if self.lj_toggle_var.get() == 1:
+            self.lj_device.running = False
+            self.lj_status.set('Terminated')
+        if self.cmr_toggle_var.get() == 1:
+            self.camera.running = False
+            self.cmr_status.set('Terminated')
 
+    # Experiment Run Functions
     def run_experiment(self):
         """
         If we succeed in connecting to our devices, do this
         """
         # 1. Make sure there is somewhere to save our file outputs
         if len(self.results_dir_used) == 0:
-            self.preresults_dir = str(dirs.main_save_dir)+dirs.settings.save_dir+'/'
-            dirs.results_dir = self.preresults_dir+'{} at [{}]/'.format(get_day(2),
-                                                                        get_day(3))
+            self.preresults_dir = str(dirs.main_save_dir) + dirs.settings.save_dir + '/'
+            dirs.results_dir = self.preresults_dir + '{} at [{}]/'.format(get_day(2),
+                                                                          get_day(3))
             self.make_save_dir = 1
             self.save_file_name.set('Currently Selected:\n[{}]'.format(
                 limit_string_length(
@@ -1214,10 +1291,10 @@ class MasterGUI(object):
         system_time = ["<L", calendar.timegm(time.gmtime()) - TIME_OFFSET]
         pwm_pack_send = []
         for i in dirs.settings.ard_last_used['pwm_pack']:
-            period = (float(1000000)/float(i[4]))
-            cycleTimeOn = long(round(period*(float(i[7])/float(100))))
-            cycleTimeOff = long(round(period*(float(1)-(float(i[7])/float(100)))))
-            timePhaseShift = long(round(period*(float(i[6])/float(360))))
+            period = (float(1000000) / float(i[4]))
+            cycleTimeOn = long(round(period * (float(i[7]) / float(100))))
+            cycleTimeOff = long(round(period * (float(1) - (float(i[7]) / float(100)))))
+            timePhaseShift = long(round(period * (float(i[6]) / float(360))))
             pwm_pack_send.append(["<LLLLLBL",
                                   0, i[2], i[3],
                                   cycleTimeOn, cycleTimeOff,
@@ -1236,19 +1313,42 @@ class MasterGUI(object):
                 self.ard_status.set('Success! Connected to '
                                     'Port [{}]. '
                                     'Data packets sent'.format(self.ard_ser.ser_port))
-                self.ard_ser.send_to_ard(pack("<B", 1))
-            # 3. Start the GUI Prog Bar
-            running = self.progbar.start()
-            if not running:
-                if self.ard_toggle_var.get() == 1:
-                    self.ard_ser.reset()
+            # 3. run threads
+            if self.lj_toggle_var.get() == 1:
+                lj_stream = threading.Thread(target=self.lj_device.read_stream_data)
+                lj_stream.daemon = True
+                lj_write = threading.Thread(target=self.lj_device.data_write_plot)
+                lj_write.daemon = True
+                self.time1 = datetime.now()
+                lj_stream.start()
+                lj_write.start()
+                self.gui_queue_process(queue=self.lj_queue, success_msg=['none'], fail_msg=['none'],
+                                       header='<ljmsg>', header_var=self.lj_status)
+            if self.cmr_toggle_var.get() == 1:
+                camera_rec = threading.Thread(target=self.camera.run)
+                camera_rec.daemon = True
+                camera_rec.start()
+                self.gui_queue_process(queue=self.cmr_queue, success_msg=['none'], fail_msg=['none'],
+                                       header='<cmrmsg>', header_var=self.cmr_status)
+            if self.ard_toggle_var.get() == 1:
+                # pre-exp delay is only 0.5s; no need for a sep thread.
+                # just deal with the gui freeze
+                threading.Thread(target=self.exp_start_listener).start()
+                self.gui_queue_process(queue=self.ard_queue, success_msg=['SuccessExp'], fail_msg=['none'],
+                                       header='<expmsg>',
+                                       header_var=self.ard_status, success_fn='RunProg>>')
         except serial.serialutil.SerialException:
             self.ard_status.set('** Arduino was disconnected! '
                                 'Reconnect the device and try again.')
-        # Finished. Turn buttons back on
-        self.run_bulk_toggle(running=False)
 
-    # Experiment Run Functions
+    def exp_start_listener(self):
+        """Listens for lock status from labjack thread and triggers
+        arduino and progbar"""
+        self.exp_lock.wait()
+        self.ard_ser.send_to_ard(pack("<B", 1))
+        self.ard_queue.put_nowait('<expmsg>Started Procedure.')
+        self.ard_queue.put_nowait('SuccessExp')
+
     def run_bulk_toggle(self, running):
         """
         Toggles all non-essential buttons to active
@@ -1306,6 +1406,7 @@ class ScrollFrame(object):
     """
     Produces a scrollable canvas item
     """
+
     def __init__(self, master, num_args, rows, bottom_padding=0):
         self.rows = rows
         self.root = master
@@ -1315,27 +1416,27 @@ class ScrollFrame(object):
         self.top_frame = Tk.Frame(self.root)
         self.top_frame.grid(row=0, column=0,
                             columnspan=self.num_args,
-                            sticky=Tk.N+Tk.S+Tk.E+Tk.W)
+                            sticky=Tk.N + Tk.S + Tk.E + Tk.W)
         # Scroll Bar
         v_bar = Tk.Scrollbar(self.root, orient=Tk.VERTICAL)
         self.canvas = Tk.Canvas(self.root, yscrollcommand=v_bar.set)
         v_bar['command'] = self.canvas.yview
         self.canvas.bind_all('<MouseWheel>', self.on_vertical)
-        v_bar.grid(row=1, column=self.num_args, sticky=Tk.N+Tk.S)
+        v_bar.grid(row=1, column=self.num_args, sticky=Tk.N + Tk.S)
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
         # Middle Frame
         self.middle_frame = Tk.Frame(self.canvas)
         # Bottom Frame
         self.bottom_frame = Tk.Frame(self.root)
-        self.bottom_frame.grid(row=2, column=0, columnspan=self.num_args+1)
+        self.bottom_frame.grid(row=2, column=0, columnspan=self.num_args + 1)
 
     def on_vertical(self, event):
         """
         :return:
          vertical position of scrollbar
         """
-        self.canvas.yview_scroll(-1*event.delta, 'units')
+        self.canvas.yview_scroll(-1 * event.delta, 'units')
 
     def finalize(self):
         """
@@ -1343,20 +1444,21 @@ class ScrollFrame(object):
         """
         self.canvas.create_window(0, 0, anchor=Tk.NW, window=self.middle_frame)
         self.canvas.grid(row=1, column=0,
-                         columnspan=self.num_args, sticky=Tk.N+Tk.S+Tk.E+Tk.W)
-        self.canvas.configure(scrollregion=(0, 0, 0, self.rows*28+self.bottom_padding))
+                         columnspan=self.num_args, sticky=Tk.N + Tk.S + Tk.E + Tk.W)
+        self.canvas.configure(scrollregion=(0, 0, 0, self.rows * 28 + self.bottom_padding))
 
 
 class GUI(object):
     """
     Standard GUI Class for all GUIs to inherit from
     """
+
     def __init__(self, master):
         self.root = master
         # noinspection PyUnresolvedReferences
         self.root.title(self.title)
         self.root.resizable(width=False, height=False)
-        self.ALL = Tk.N+Tk.E+Tk.S+Tk.W
+        self.ALL = Tk.N + Tk.E + Tk.S + Tk.W
         self.hard_stop = False
         self.root.protocol('WM_DELETE_WINDOW', self.hard_exit)
         self.root.wm_attributes("-topmost", 1)
@@ -1383,8 +1485,8 @@ class GUI(object):
         [window_width, window_height] = list(
             int(i) for i in
             self.root.geometry().split('+')[0].split('x'))
-        x_pos = screen_width/2 - window_width/2
-        y_pos = screen_height/2 - window_height/2
+        x_pos = screen_width / 2 - window_width / 2
+        y_pos = screen_height / 2 - window_height / 2
         self.root.geometry('{}x{}+{}+{}'.format(
             window_width,
             window_height,
@@ -1439,6 +1541,7 @@ class PhotometryGUI(GUI):
     Options appended: - Channels Used and associated Data column
                       - Sample stimulation frequencies (primary and isosbestic)
     """
+
     def __init__(self, master):
         self.title = 'Photometry Configuration'
         GUI.__init__(self, master)
@@ -1452,7 +1555,7 @@ class PhotometryGUI(GUI):
             self.chk_buttons[i].set(self.ch_num[i])
         Tk.Label(self.root,
                  text='\nPrevious Settings Loaded\n'
-                 'These settings will be saved in your .csv outputs.\n',
+                      'These settings will be saved in your .csv outputs.\n',
                  relief=Tk.RAISED).pack(fill='both', expand='yes')
         data_frame = Tk.LabelFrame(self.root,
                                    text='Photometry Data Channel')
@@ -1463,7 +1566,7 @@ class PhotometryGUI(GUI):
         button_frames = [data_frame, true_frame, isos_frame]
         buttons = []
         for i in range(len(button_frames)):
-            buttons.append(copy.deepcopy([[]]*NUM_LJ_CH))
+            buttons.append(copy.deepcopy([[]] * NUM_LJ_CH))
         for frame_index in range(len(button_frames)):
             button_frames[frame_index].pack(fill='both', expand='yes')
             for i in range(NUM_LJ_CH):
@@ -1550,6 +1653,7 @@ class LabJackGUI(GUI):
     """
     GUI for LabJack configuration
     """
+
     def __init__(self, master):
         self.lj_save_name = ''
         self.ch_num = dirs.settings.lj_last_used['ch_num']
@@ -1596,14 +1700,14 @@ class LabJackGUI(GUI):
         ch_frame.pack(fill='both', expand='yes')
         # Create Check Buttons
         self.button_vars = self.create_tk_vars('Int', NUM_LJ_CH)
-        buttons = copy.deepcopy([[]]*NUM_LJ_CH)
+        buttons = copy.deepcopy([[]] * NUM_LJ_CH)
         for i in range(NUM_LJ_CH):
             buttons[i] = Tk.Checkbutton(ch_frame, text='{:0>2}'.format(i),
                                         variable=self.button_vars[i],
                                         onvalue=1, offvalue=0,
                                         command=self.select_button)
         for i in range(NUM_LJ_CH):
-            buttons[i].grid(row=i//5, column=i-(i//5)*5)
+            buttons[i].grid(row=i // 5, column=i - (i // 5) * 5)
         for i in self.ch_num:
             buttons[i].select()
         # Sampling Frequency Field
@@ -1729,7 +1833,7 @@ class LabJackGUI(GUI):
         else:
             try:
                 self.scan_freq = int(self.scan_entry.get())
-                max_freq = int(50000/self.n_ch)
+                max_freq = int(50000 / self.n_ch)
                 if self.scan_freq == 0:
                     tkMb.showinfo('Error!',
                                   'Scan Frequency must be higher than 0 Hz.',
@@ -1776,6 +1880,7 @@ class ArduinoGUI(GUI):
     Handles user facing end of arduino communication
     then passes input information to ArduinoComm
     """
+
     def __init__(self, master):
         self.root = master
         self.close_gui = False
@@ -1813,13 +1918,13 @@ class ArduinoGUI(GUI):
             pin_ids = 10
             entry = self.entries[row]
             arg_types = ['Time On (s)', 'Time until Off (s)', 'Frequency (Hz)']
-            err_place_msg = 'row [{:0>2}]'.format(row+1)
+            err_place_msg = 'row [{:0>2}]'.format(row + 1)
         elif self.types == 'output':
             pin_ids = range(2, 8)
             pin_ids = pin_ids[pin]
             entry = self.entries[pin][row]
             arg_types = ['Time On (s)', 'Time until Off (s)']
-            err_place_msg = 'row [{:0>2}], pin [{:0>2}]'.format(row+1, pin_ids)
+            err_place_msg = 'row [{:0>2}], pin [{:0>2}]'.format(row + 1, pin_ids)
         elif self.types == 'pwm':
             pin_ids = range(8, 14)
             pin_ids.remove(10)
@@ -1827,7 +1932,7 @@ class ArduinoGUI(GUI):
             entry = self.entries[pin][row]
             arg_types = ['Time On (s)', 'Time until Off (s)', 'Frequency (Hz)',
                          'Duty Cycle (%)', 'Phase Shift (deg)']
-            err_place_msg = 'row [{:0>2}], pin [{:0>2}]'.format(row+1, pin_ids)
+            err_place_msg = 'row [{:0>2}], pin [{:0>2}]'.format(row + 1, pin_ids)
         ####################################################################
         # Grab comma separated user inputs as a list
         inputs = entry.get().split(',')
@@ -1848,7 +1953,7 @@ class ArduinoGUI(GUI):
             if i == 2:
                 error_str += '\n'
             error_str += str(arg_types[i])
-            if i < num_args-1:
+            if i < num_args - 1:
                 error_str += ', '
         # 2a. More than 0 but not num_args
         if len(inputs) != num_args and len(inputs) > 0:
@@ -1868,7 +1973,7 @@ class ArduinoGUI(GUI):
         # 3. Check input content are valid
         try:
             on, off = int(inputs[0]), int(inputs[1])
-            on_ms, off_ms = on*1000, off*1000
+            on_ms, off_ms = on * 1000, off * 1000
             refr, freq, phase, duty_cycle = [], 0, 0, 0
             if self.types == 'tone':
                 freq = int(inputs[2])
@@ -1881,8 +1986,8 @@ class ArduinoGUI(GUI):
                 phase = int(inputs[4])
                 refr = long('{:0>5}{:0>5}{:0>5}'.format(freq, duty_cycle, phase))
             # 3a. If on+off > main gui max time, we change gui time at close
-            if (on_ms+off_ms) > self.max_time and off_ms != 0:
-                    self.max_time = on_ms+off_ms
+            if (on_ms + off_ms) > self.max_time and off_ms != 0:
+                self.max_time = on_ms + off_ms
             # 3b. Time interval for each entry must be > 0
             if off_ms == 0:
                 tkMb.showinfo('Error!',
@@ -2008,51 +2113,51 @@ class ArduinoGUI(GUI):
             return False
         # 4c. We've finished checking for validity.
         #     If the input reached this far, it's ready to be added
-        self.data['middles'][refr] += range(on+1, on+off)
+        self.data['middles'][refr] += range(on + 1, on + off)
         front, back = 0, 0
         self.time_combine(on_ms, off_ms, front, back, refr)
-        if on in self.data['ends'][refr] and on+off not in self.data['starts'][refr]:
+        if on in self.data['ends'][refr] and on + off not in self.data['starts'][refr]:
             front, back = 1, 0
             self.data['middles'][refr].append(on)
             self.data['ends'][refr].remove(on)
-            self.data['ends'][refr].append(on+off)
+            self.data['ends'][refr].append(on + off)
             self.time_combine(on_ms, off_ms, front, back, refr)
-        elif on not in self.data['ends'][refr] and on+off in self.data['starts'][refr]:
+        elif on not in self.data['ends'][refr] and on + off in self.data['starts'][refr]:
             front, back = 0, 1
-            self.data['middles'][refr].append(on+off)
-            self.data['starts'][refr].remove(on+off)
+            self.data['middles'][refr].append(on + off)
+            self.data['starts'][refr].remove(on + off)
             self.data['starts'][refr].append(on)
             self.time_combine(on_ms, off_ms, front, back, refr)
-        elif on in self.data['ends'][refr] and on+off in self.data['starts'][refr]:
+        elif on in self.data['ends'][refr] and on + off in self.data['starts'][refr]:
             front, back = 1, 1
             self.data['middles'][refr].append(on)
-            self.data['middles'][refr].append(on+off)
-            self.data['starts'][refr].remove(on+off)
+            self.data['middles'][refr].append(on + off)
+            self.data['starts'][refr].remove(on + off)
             self.data['ends'][refr].remove(on)
             self.time_combine(on_ms, off_ms, front, back, refr)
         else:
             self.data['starts'][refr].append(on)
-            self.data['ends'][refr].append(on+off)
+            self.data['ends'][refr].append(on + off)
         # Now we need to make sure this one comes out as an already validated field
         if self.types == 'tone':
             self.fields_validated[rows] = {'starts': on,
-                                           'middles': range(on+1, on+off),
-                                           'ends': on+off,
-                                           'hold': [on_ms, on_ms+off_ms],
+                                           'middles': range(on + 1, on + off),
+                                           'ends': on + off,
+                                           'hold': [on_ms, on_ms + off_ms],
                                            'refr': refr}
         elif self.types == 'output':
             pin_int = pin_to_int(refr)
-            self.fields_validated[rows+pins] = {'starts': on,
-                                                'middles': range(on+1, on+off),
-                                                'ends': on+off,
-                                                'hold': {on_ms: pin_int, off_ms: pin_int},
-                                                'refr': refr}
+            self.fields_validated[rows + pins] = {'starts': on,
+                                                  'middles': range(on + 1, on + off),
+                                                  'ends': on + off,
+                                                  'hold': {on_ms: pin_int, off_ms: pin_int},
+                                                  'refr': refr}
         elif self.types == 'pwm':
-            self.fields_validated[rows+pins] = {'starts': on,
-                                                'middles': range(on+1, on+off),
-                                                'ends': on+off,
-                                                'hold': [on_ms, on_ms+off_ms],
-                                                'refr': refr}
+            self.fields_validated[rows + pins] = {'starts': on,
+                                                  'middles': range(on + 1, on + off),
+                                                  'ends': on + off,
+                                                  'hold': [on_ms, on_ms + off_ms],
+                                                  'refr': refr}
         # again, pwm requires some extra work before we finish...
         if self.types == 'pwm':
             (self.data['starts'],
@@ -2082,12 +2187,12 @@ class ArduinoGUI(GUI):
             field_refr = field['refr']
         elif self.types in ['output', 'pwm']:
             try:
-                self.fields_validated[rows+pins]
+                self.fields_validated[rows + pins]
             except KeyError:
-                self.fields_validated[rows+pins] = {'starts': -1, 'middles': [],
-                                                    'ends': -1, 'hold': [], 'refr': refr}
+                self.fields_validated[rows + pins] = {'starts': -1, 'middles': [],
+                                                      'ends': -1, 'hold': [], 'refr': refr}
                 return
-            field = self.fields_validated[rows+pins]
+            field = self.fields_validated[rows + pins]
             field_refr = field['refr']
         if self.types in ['tone', 'pwm']:
             try:
@@ -2101,18 +2206,18 @@ class ArduinoGUI(GUI):
                 # Remove starts, ends, holds
                 if field['starts'] in self.data['starts'][field_refr]:
                     self.data['starts'][field_refr].remove(field['starts'])
-                    self.data['hold'][field_refr].remove(field['starts']*1000)
+                    self.data['hold'][field_refr].remove(field['starts'] * 1000)
                 elif field['starts'] in self.data['middles'][field_refr]:
                     self.data['middles'][field_refr].remove(field['starts'])
                     self.data['ends'][field_refr].append(field['starts'])
-                    self.data['hold'][field_refr].append(field['starts']*1000)
+                    self.data['hold'][field_refr].append(field['starts'] * 1000)
                 if field['ends'] in self.data['ends'][field_refr]:
                     self.data['ends'][field_refr].remove(field['ends'])
-                    self.data['hold'][field_refr].remove(field['ends']*1000)
+                    self.data['hold'][field_refr].remove(field['ends'] * 1000)
                 elif field['ends'] in self.data['middles'][field_refr]:
                     self.data['middles'][field_refr].remove(field['ends'])
                     self.data['starts'][field_refr].append(field['ends'])
-                    self.data['hold'][field_refr].append(field['ends']*1000)
+                    self.data['hold'][field_refr].append(field['ends'] * 1000)
                 # Set field to empty; we'll have to add back into it in the validate function
                 if self.types == 'tone':
                     self.fields_validated[rows] = {'starts': -1, 'middles': [],
@@ -2127,7 +2232,7 @@ class ArduinoGUI(GUI):
             try:
                 self.data['starts'][field_refr], self.data['middles'][field_refr]
                 self.data['ends'][field_refr]
-                self.data['hold'][field['starts']*1000], self.data['hold'][field['ends']*1000]
+                self.data['hold'][field['starts'] * 1000], self.data['hold'][field['ends'] * 1000]
                 # rm middles
                 for i in field['middles']:
                     if i in self.data['middles'][field_refr]:
@@ -2135,37 +2240,37 @@ class ArduinoGUI(GUI):
                 # rm s, e, h
                 if field['starts'] in self.data['starts'][field_refr]:
                     self.data['starts'][field_refr].remove(field['starts'])
-                    if self.data['hold'][field['starts']*1000] == pin_int:
+                    if self.data['hold'][field['starts'] * 1000] == pin_int:
                         self.data['hold'] = {key: self.data['hold'][key]
                                              for key in self.data['hold']
-                                             if key != field['starts']*1000}
+                                             if key != field['starts'] * 1000}
                     else:
-                        self.data['hold'][field['starts']*1000] -= pin_int
+                        self.data['hold'][field['starts'] * 1000] -= pin_int
                 elif field['starts'] in self.data['middles'][field_refr]:
                     self.data['middles'][field_refr].remove(field['starts'])
                     self.data['ends'][field_refr].append(field['starts'])
-                    if field['starts']*1000 in self.data['hold']:
-                        self.data['hold'][field['starts']*1000] += pin_int
+                    if field['starts'] * 1000 in self.data['hold']:
+                        self.data['hold'][field['starts'] * 1000] += pin_int
                     else:
-                        self.data['hold'][field['starts']*1000] = pin_int
+                        self.data['hold'][field['starts'] * 1000] = pin_int
                 if field['ends'] in self.data['ends'][field_refr]:
                     self.data['ends'][field_refr].remove(field['ends'])
-                    if self.data['hold'][field['ends']*1000] == pin_int:
+                    if self.data['hold'][field['ends'] * 1000] == pin_int:
                         self.data['hold'] = {key: self.data['hold'][key]
                                              for key in self.data['hold']
-                                             if key != field['ends']*1000}
+                                             if key != field['ends'] * 1000}
                     else:
-                        self.data['hold'][field['ends']*1000] -= pin_int
+                        self.data['hold'][field['ends'] * 1000] -= pin_int
                 elif field['ends'] in self.data['middles'][field_refr]:
                     self.data['middles'][field_refr].remove(field['ends'])
                     self.data['starts'][field_refr].append(field['ends'])
-                    if field['ends']*1000 in self.data['hold']:
-                        self.data['hold'][field['ends']*1000] += pin_int
+                    if field['ends'] * 1000 in self.data['hold']:
+                        self.data['hold'][field['ends'] * 1000] += pin_int
                     else:
-                        self.data['hold'][field['ends']*1000] = pin_int
+                        self.data['hold'][field['ends'] * 1000] = pin_int
                 # set field to empty
-                self.fields_validated[rows+pins] = {'starts': -1, 'middles': [],
-                                                    'ends': -1, 'hold': [], 'refr': refr}
+                self.fields_validated[rows + pins] = {'starts': -1, 'middles': [],
+                                                      'ends': -1, 'hold': [], 'refr': refr}
             except KeyError:
                 pass
 
@@ -2177,12 +2282,12 @@ class ArduinoGUI(GUI):
         if self.types in ['pwm', 'tone']:
             if front == 0 and back == 0:
                 self.data['hold'][refr].append(on_ms)
-                self.data['hold'][refr].append(on_ms+off_ms)
+                self.data['hold'][refr].append(on_ms + off_ms)
             if front == 1:
                 self.data['hold'][refr].remove(on_ms)
                 self.data['hold'][refr].remove(on_ms)
             if back == 1:
-                self.data['hold'][refr].remove(on_ms+off_ms)
+                self.data['hold'][refr].remove(on_ms + off_ms)
                 self.data['hold'][refr].remove(on_ms + off_ms)
         elif self.types == 'output':
             pin_int = pin_to_int(refr)
@@ -2191,20 +2296,20 @@ class ArduinoGUI(GUI):
                     self.data['hold'][on_ms] = pin_int
                 elif on_ms in self.data['hold']:
                     self.data['hold'][on_ms] += pin_int
-                if on_ms+off_ms not in self.data['hold']:
-                    self.data['hold'][on_ms+off_ms] = pin_int
-                elif on_ms+off_ms in self.data['hold']:
-                    self.data['hold'][on_ms+off_ms] += pin_int
+                if on_ms + off_ms not in self.data['hold']:
+                    self.data['hold'][on_ms + off_ms] = pin_int
+                elif on_ms + off_ms in self.data['hold']:
+                    self.data['hold'][on_ms + off_ms] += pin_int
             if front == 1:
-                if self.data['hold'][on_ms] == (2*pin_int):
+                if self.data['hold'][on_ms] == (2 * pin_int):
                     self.data['hold'].pop(on_ms)
                 else:
-                    self.data['hold'][on_ms] -= (2*pin_int)
+                    self.data['hold'][on_ms] -= (2 * pin_int)
             if back == 1:
-                if self.data['hold'][on_ms+off_ms] == (2*pin_int):
-                    self.data['hold'].pop(on_ms+off_ms)
+                if self.data['hold'][on_ms + off_ms] == (2 * pin_int):
+                    self.data['hold'].pop(on_ms + off_ms)
                 else:
-                    self.data['hold'][on_ms+off] -= (2*pin_int)
+                    self.data['hold'][on_ms + off] -= (2 * pin_int)
 
     def close(self):
         """
@@ -2231,7 +2336,7 @@ class ArduinoGUI(GUI):
                 for i in range(len(self.data['hold'][freq])):
                     if i % 2 == 0:
                         self.return_data.append([self.data['hold'][freq][i],
-                                                 self.data['hold'][freq][i+1],
+                                                 self.data['hold'][freq][i + 1],
                                                  freq])
         elif self.types == 'pwm':
             for pin_int in self.data['hold']:
@@ -2245,7 +2350,7 @@ class ArduinoGUI(GUI):
                         if i % 2 == 0:
                             self.return_data.append([0,
                                                      self.data['hold'][pin_int][refr][i],
-                                                     self.data['hold'][pin_int][refr][i+1],
+                                                     self.data['hold'][pin_int][refr][i + 1],
                                                      freq_i,
                                                      pin_int,
                                                      phase_i,
@@ -2310,7 +2415,7 @@ class ArduinoGUI(GUI):
         self.root.title('Tone Configuration')
         self.types = 'tone'
         num_pins, self.num_entries = 1, 15
-        scroll_frame = ScrollFrame(self.root, num_pins, self.num_entries+1)
+        scroll_frame = ScrollFrame(self.root, num_pins, self.num_entries + 1)
         # Setup Buttons
         self.tone_var = Tk.IntVar()
         self.tone_var.set(0)
@@ -2322,21 +2427,21 @@ class ArduinoGUI(GUI):
                                 command=lambda tags='tone': self.button_toggle(tags))
         button.pack()
         # Setup Entries
-        self.entries = copy.deepcopy([[]]*self.num_entries)
+        self.entries = copy.deepcopy([[]] * self.num_entries)
         Tk.Label(scroll_frame.middle_frame,
                  text='Time On(s), '
                       'Time until Off(s), '
                       'Freq (Hz)').grid(row=0, column=1, sticky=self.ALL)
         for row in range(self.num_entries):
             Tk.Label(scroll_frame.middle_frame,
-                     text='{:0>2}'.format(row+1)).grid(row=row+1, column=0)
+                     text='{:0>2}'.format(row + 1)).grid(row=row + 1, column=0)
             validate = (scroll_frame.middle_frame.register(self.entry_validate),
                         False, row)
             self.entries[row] = Tk.Entry(
                 scroll_frame.middle_frame,
                 validate='focusout',
                 validatecommand=validate)
-            self.entries[row].grid(row=row+1, column=1, sticky=self.ALL)
+            self.entries[row].grid(row=row + 1, column=1, sticky=self.ALL)
             self.entries[row].config(state=Tk.DISABLED)
         # Confirm button
         self.closebutton = Tk.Button(scroll_frame.bottom_frame,
@@ -2361,24 +2466,24 @@ class ArduinoGUI(GUI):
         self.root.title('Simple Output Config.')
         self.types = 'output'
         num_pins, self.num_entries = 6, 15
-        scroll_frame = ScrollFrame(self.root, num_pins, self.num_entries+1,
+        scroll_frame = ScrollFrame(self.root, num_pins, self.num_entries + 1,
                                    bottom_padding=8)
         info_frame = Tk.LabelFrame(scroll_frame.top_frame,
                                    text='Enable Arduino Pins')
         info_frame.grid(row=0, column=0, sticky=self.ALL)
-        Tk.Label(info_frame, text=' '*21).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame, text=' ' * 21).pack(side=Tk.RIGHT)
         Tk.Label(info_frame, text='Enable pins, then input instructions '
                                   'line by line with comma '
                                   'separation.',
                  relief=Tk.RAISED).pack(side=Tk.RIGHT)
-        Tk.Label(info_frame, text=' '*21).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame, text=' ' * 21).pack(side=Tk.RIGHT)
         # Variables
         self.entries = []
         for pin in range(num_pins):
             self.entries.append([])
             for entry in range(self.num_entries):
                 self.entries[pin].append([])
-        button = copy.deepcopy([[]]*num_pins)
+        button = copy.deepcopy([[]] * num_pins)
         self.output_var = self.create_tk_vars('Int', num_pins)
         # Setup items
         for pin in range(num_pins):
@@ -2394,16 +2499,16 @@ class ArduinoGUI(GUI):
                      text='Pin {:0>2}\n'
                           'Time On(s), '
                           'Time until Off(s)'.format(self.output_ids[pin])).grid(row=0,
-                                                                                 column=1+pin)
+                                                                                 column=1 + pin)
             for row in range(self.num_entries):
                 validate = (scroll_frame.middle_frame.register(self.entry_validate),
                             pin, row)
                 Tk.Label(scroll_frame.middle_frame,
-                         text='{:0>2}'.format(row+1)).grid(row=row+1, column=0)
+                         text='{:0>2}'.format(row + 1)).grid(row=row + 1, column=0)
                 self.entries[pin][row] = Tk.Entry(scroll_frame.middle_frame, width=18,
                                                   validate='focusout',
                                                   validatecommand=validate)
-                self.entries[pin][row].grid(row=row+1, column=1+pin)
+                self.entries[pin][row].grid(row=row + 1, column=1 + pin)
                 self.entries[pin][row].config(state=Tk.DISABLED)
         # Confirm Button
         self.closebutton = Tk.Button(scroll_frame.bottom_frame,
@@ -2428,27 +2533,27 @@ class ArduinoGUI(GUI):
         self.types = 'pwm'
         num_pins, self.num_entries = 5, 15
         scroll_frame = ScrollFrame(self.root, num_pins,
-                                   self.num_entries+1, bottom_padding=24)
+                                   self.num_entries + 1, bottom_padding=24)
         info_frame = Tk.LabelFrame(scroll_frame.top_frame,
                                    text='Enable Arduino Pins')
         info_frame.grid(row=0, column=0, sticky=self.ALL)
-        Tk.Label(info_frame, text=' '*2).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame, text=' ' * 2).pack(side=Tk.RIGHT)
         Tk.Label(info_frame, text='e.g. 0,180,200,20,90  (Per Field)',
                  relief=Tk.RAISED).pack(side=Tk.RIGHT)
-        Tk.Label(info_frame, text=' '*2).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame, text=' ' * 2).pack(side=Tk.RIGHT)
         Tk.Label(info_frame,
                  text='Enable pins, then input instructions '
                       'with comma separation.',
                  relief=Tk.RAISED).pack(side=Tk.RIGHT)
         Tk.Label(info_frame,
-                 text=' '*5).pack(side=Tk.RIGHT)
+                 text=' ' * 5).pack(side=Tk.RIGHT)
         # Variables
         self.entries = []
         for pin in range(num_pins):
             self.entries.append([])
             for entry in range(self.num_entries):
                 self.entries[pin].append([])
-        button = copy.deepcopy([[]]*num_pins)
+        button = copy.deepcopy([[]] * num_pins)
         self.pwm_var = self.create_tk_vars('Int', num_pins)
         # Setup items
         for pin in range(num_pins):
@@ -2465,17 +2570,17 @@ class ArduinoGUI(GUI):
                           'Time until Off(s), \n'
                           'Freq (Hz), '
                           'Duty Cycle (%),\n'
-                          'Phase Shift '.format(self.pwm_ids[pin])+'('+u'\u00b0'+')').grid(row=0, column=1+pin)
+                          'Phase Shift '.format(self.pwm_ids[pin]) + '(' + u'\u00b0' + ')').grid(row=0, column=1 + pin)
             for row in range(self.num_entries):
                 validate = (scroll_frame.middle_frame.register(self.entry_validate),
                             pin, row)
                 Tk.Label(scroll_frame.middle_frame,
-                         text='{:0>2}'.format(row+1)).grid(row=row+1, column=0)
+                         text='{:0>2}'.format(row + 1)).grid(row=row + 1, column=0)
                 self.entries[pin][row] = Tk.Entry(scroll_frame.middle_frame, width=25,
                                                   validate='focusout',
                                                   validatecommand=validate)
                 self.entries[pin][row].grid(
-                    row=row+1, column=1+pin)
+                    row=row + 1, column=1 + pin)
                 self.entries[pin][row].config(state='disabled')
         # Confirm Button
         self.closebutton = Tk.Button(scroll_frame.bottom_frame,
@@ -2503,7 +2608,7 @@ class ProgressBar(threading.Thread):
     """
     Creates a dynamic progress bar
     """
-    def __init__(self, canvas, bar, time_gfx, ms_total_time,):
+    def __init__(self, canvas, bar, time_gfx, ms_total_time):
         threading.Thread.__init__(self)
         self.daemon = True
         self.canvas = canvas
@@ -2541,7 +2646,7 @@ class ProgressBar(threading.Thread):
                     self.canvas.move(self.time_gfx, 1, 0)
                 self.num_prog += 1
             self.canvas.update()
-            time.sleep(0.005)
+            time.sleep(0.010)
             if self.num_prog > 1000 or self.time_diff > float(self.ms_total_time / 1000):
                 self.running = False
                 return self.running
@@ -2558,6 +2663,7 @@ class ArduinoComm(threading.Thread):
     """
     Handles serial communication with arduino
     """
+
     def __init__(self, queue):
         threading.Thread.__init__(self)
         self.daemon = True
@@ -2695,6 +2801,7 @@ class LabJackComm(threading.Thread):
     Checks if LJU6 is available or is being taken up by
     another program instance, disconnected, etc.
     """
+
     def __init__(self, queue, lj_device):
         threading.Thread.__init__(self)
         self.daemon = True
@@ -2710,8 +2817,8 @@ class LabJackComm(threading.Thread):
         """
         self.queue.put('{}Connecting to LabJack...'.format(self.msg_header))
         try:
-            self.device.open()
             self.device.close()
+            self.device.open()
             self.queue.put('{}Connected to LabJack!'.format(self.msg_header))
             self.queue.put(self.success_msg)
             return
@@ -2723,7 +2830,7 @@ class LabJackComm(threading.Thread):
                 time.sleep(2)
                 self.device.hardReset()
                 time.sleep(2)
-                self.device = LJU6()
+                self.device.open()
                 self.queue.put('{}Connected to LabJack!'.format(self.msg_header))
                 self.queue.put(self.success_msg)
                 return
@@ -2742,7 +2849,8 @@ class LJU6(u6.U6):
     Samples per packet / packet per request
     determination
     """
-    def __init__(self, exp_lock, read_lock):
+
+    def __init__(self, exp_lock, read_lock, report_queue):
         u6.U6.__init__(self)
         self.data = Queue.Queue()
         # threading events to block other threads until ready
@@ -2754,6 +2862,7 @@ class LJU6(u6.U6):
         self.n_ch = 0
         self.reinitialize_vars()
         self.time_start_read = 0
+        self.report_queue = report_queue
 
     @staticmethod
     def find_packets_per_req(scanFreq, nCh):
@@ -2849,7 +2958,7 @@ class LJU6(u6.U6):
             freq = float(4000000)
         if DivideClockBy256:
             freq /= 256
-        freq = freq/ScanInterval
+        freq = freq / ScanInterval
         # Only happens for ScanFreq < 25, in which case
         # this number is generated as described above
         if SamplesPerPacket < 25:
@@ -2869,6 +2978,8 @@ class LJU6(u6.U6):
         reading = True
         datacount = 0
         while reading:
+            if not self.running:
+                break
             return_dict = self.streamData(convert=False).next()
             self.data.put_nowait(copy.deepcopy(return_dict))
             datacount += 1
@@ -2890,23 +3001,23 @@ class LJU6(u6.U6):
         """
         Reads from stream and puts in queue
         """
+        self.reinitialize_vars()
         datacount_hold = []
         self.getCalibrationData()
         self.streamConfig(NumChannels=self.n_ch, ChannelNumbers=self.ch_num,
-                          ChannelOptions=[0]*self.n_ch, ScanFrequency=self.scan_freq)
+                          ChannelOptions=[0] * self.n_ch, ScanFrequency=self.scan_freq)
         ttl_time = dirs.settings.ard_last_used['packet'][3]
         max_requests = int(math.ceil(
-            (float(self.scan_freq*self.n_ch*ttl_time/1000)/float(
-                self.packetsPerRequest*self.samplesPerPacket))))
+            (float(self.scan_freq * self.n_ch * ttl_time / 1000) / float(
+                self.packetsPerRequest * self.samplesPerPacket))))
         small_request = int(round(
-            (float(self.scan_freq*self.n_ch*0.5)/float(
-                self.packetsPerRequest*self.samplesPerPacket))))
-        self.open()
-        self.streamStart()
+            (float(self.scan_freq * self.n_ch * 0.5) / float(
+                self.packetsPerRequest * self.samplesPerPacket))))
         # We will read 3 segments: 0.5s before begin exp, during exp, and 0.5s after exp
         # 1. 0.5s before exp. start; extra collected for safety
         self.time_start_read = datetime.now()
         self.running = True
+        self.streamStart()
         self.read_lock.set()  # we will now allow data reading
         while self.running:
             self.read_with_counter(small_request, datacount_hold)
@@ -2920,12 +3031,13 @@ class LJU6(u6.U6):
             self.running = False
         time_stop_read = datetime.now()
         self.streamStop()
-        self.close()
         self.data.queue.clear()
+        self.read_lock.clear()
+        self.exp_lock.clear()
         # now we do some reporting
         # samples taken for each interval:
-        multiplier = self.packetsPerRequest*self.streamSamplesPerPacket
-        datacount_hold = (np.asarray(datacount_hold))*multiplier
+        multiplier = self.packetsPerRequest * self.streamSamplesPerPacket
+        datacount_hold = (np.asarray(datacount_hold)) * multiplier
         total_samples = sum(i for i in datacount_hold)
         # total run times for each interval
         before_run_time = get_time_diff(start_time=self.time_start_read, end_time=time_start, choice='us')
@@ -2933,10 +3045,10 @@ class LJU6(u6.U6):
         after_run_time = get_time_diff(start_time=time_stop, end_time=time_stop_read, choice='us')
         total_run_time = get_time_diff(start_time=self.time_start_read, end_time=time_stop_read, choice='us')
         # actual sampling frequencies
-        overall_smpl_freq = int(round(float(total_samples)*1000)/total_run_time)
-        overall_scan_freq = overall_smpl_freq/self.n_ch
-        exp_smpl_freq = int(round(float(datacount_hold[1])*1000)/run_time)
-        exp_scan_freq = exp_smpl_freq/self.n_ch
+        overall_smpl_freq = int(round(float(total_samples) * 1000) / total_run_time)
+        overall_scan_freq = overall_smpl_freq / self.n_ch
+        exp_smpl_freq = int(round(float(datacount_hold[1]) * 1000) / run_time)
+        exp_scan_freq = exp_smpl_freq / self.n_ch
 
     def data_write_plot(self):
         """
@@ -2944,11 +3056,12 @@ class LJU6(u6.U6):
         """
         missed_total, missed_list = 0, []
         save_file_name = '[name]-{}'.format(get_day(3))
-        with open(dirs.results_dir+save_file_name+'.csv', 'w') as save_file:
+        with open(dirs.results_dir + save_file_name + '.csv', 'w') as save_file:
             for i in range(self.n_ch):
                 save_file.write('AIN{},'.format(self.ch_num[i]))
             save_file.write('\n')
-            self.read_lock.wait() # wait for the go ahead from read_stream_data
+            self.read_lock.wait()  # wait for the go ahead from read_stream_data
+            self.report_queue.put_nowait('<ljmsg>Started Streaming.')
             while self.running:
                 try:
                     if not self.running:
@@ -2960,17 +3073,59 @@ class LJU6(u6.U6):
                         time_diff = get_time_diff(start_time=self.time_start_read,
                                                   end_time=missed_time)
                         missed_list.append([copy.deepcopy(result['missed']),
-                                            copy.deepcopy(float(time_diff)/1000)])
+                                            copy.deepcopy(float(time_diff) / 1000)])
                     r = self.processStreamData(result['result'])
                     for each in range(len(r['AIN{}'.format(self.ch_num[0])])):
                         for i in range(self.n_ch):
-                            save_file.write(str(r['AIN{}'.format(self.ch_num[i])][each])+',')
+                            save_file.write(str(r['AIN{}'.format(self.ch_num[i])][each]) + ',')
                         save_file.write('\n')
                 except Queue.Empty:
-                    print 'QUEUE IS EMPTY STOPPING (MOVE THIS LINE TO GUI)'*20
+                    print 'Empty Queue'
                     self.running = False
                     break
 
+
+class FireFly(object):
+    """firefly camera. run as daemoned thread"""
+
+    def __init__(self, exp_lock, report_queue):
+        self.context = fc2.Context()
+        self.exp_lock = exp_lock
+        self.context.connect(*self.context.get_camera_from_index(0))
+        self.context.set_video_mode_and_frame_rate(fc2.VIDEOMODE_640x480Y8,
+                                                   fc2.FRAMERATE_30)
+        prop = self.context.get_property(fc2.FRAME_RATE)
+        self.context.set_property(**prop)
+        self.context.start_capture()
+        self.running = False
+        self.report_queue = report_queue
+
+    def record(self, file_name, num_frames):
+        """records images to .avi"""
+        self.context.set_strobe_mode(3, True, 1, 0, 10)
+        self.context.openAVI(file_name, frate=30, bitrate=1000000)
+        for i in range(num_frames):
+            if not self.running:
+                break
+            self.context.appendAVI()
+        self.context.set_strobe_mode(3, False, 1, 0, 10)
+        self.context.closeAVI()
+
+    def close(self):
+        """closes camera instance"""
+        self.context.stop_capture()
+        self.context.disconnect()
+
+    def run(self):
+        """start camera recording"""
+        video_save_name = '[name]-{}'.format(get_day(3))
+        num_frames = (dirs.settings.ard_last_used['packet'][3] / 1000) * 30
+        self.exp_lock.wait()
+        self.report_queue.put_nowait('<cmrmsg>Started Recording.')
+        self.report_queue.put_nowait('<cmr_ready>')
+        self.running = True
+        self.record(dirs.results_dir + video_save_name, num_frames)
+        self.running = False
 
 
 #################################################################
@@ -2981,15 +3136,16 @@ class Directories(object):
     .frcl: Main Settings Pickle
     .csv: Standard comma separated file for data output
     """
+
     def __init__(self, root):
         self.root = root
         self.user_home = os.path.expanduser('~')
-        self.main_save_dir = self.user_home+'/desktop/frCntrlSaves/'
+        self.main_save_dir = self.user_home + '/desktop/frCntrlSaves/'
         self.results_dir = ''
         self.settings = MainSettings()
-        if not os.path.isfile(self.user_home+'/frSettings.frcl'):
+        if not os.path.isfile(self.user_home + '/frSettings.frcl'):
             # Create Settings file if does not exist
-            with open(self.user_home+'/frSettings.frcl', 'wb') as f:
+            with open(self.user_home + '/frSettings.frcl', 'wb') as f:
                 # Put in some example settings and presets
                 self.settings.load_examples()
                 pickle.dump(self.settings, f)
@@ -3024,8 +3180,8 @@ class Directories(object):
                          'Are you sure?',
                          default='no',
                          parent=self.root):
-            shutil.rmtree(self.user_home+'/desktop/frCntrlSaves/')
-            os.remove(self.user_home+'/frSettings.frcl')
+            shutil.rmtree(self.user_home + '/desktop/frCntrlSaves/')
+            os.remove(self.user_home + '/frSettings.frcl')
             time.sleep(0.5)
             tkMb.showinfo('Finished',
                           'All Settings and Save Directories Deleted.\n'
@@ -3045,6 +3201,7 @@ class MainSettings(object):
     a MainSettings singleton.
     Object saves and holds all relevant parameters and presets
     """
+
     def __init__(self):
         self.ser_port = ''
         self.save_dir = ''
@@ -3082,20 +3239,20 @@ class MainSettings(object):
         self.lj_presets = {'example': {'ch_num': [0, 1, 2, 10, 11],
                                        'scan_freq': 6250}}
         self.ard_presets = {'example':
-                            {'packet': ['<BBLHHH', 255, 255, 180000, 1, 2, 0],
-                             'tone_pack': [['<LLH', 120000, 150000, 2800]],
-                             'out_pack': [['<LB', 148000, 4], ['<LB', 150000, 4]],
-                             'pwm_pack': []},
+                                {'packet': ['<BBLHHH', 255, 255, 180000, 1, 2, 0],
+                                 'tone_pack': [['<LLH', 120000, 150000, 2800]],
+                                 'out_pack': [['<LB', 148000, 4], ['<LB', 150000, 4]],
+                                 'pwm_pack': []},
                             'example 2':
-                            {'packet': ['<BBLHHH', 255, 255, 300000, 3, 6, 2],
-                             'tone_pack': [['<LLH', 30000, 60000, 2800],
-                                           ['<LLH', 90000, 120000, 2800],
-                                           ['<LLH', 240000, 270000, 2000]],
-                             'out_pack': [['<LB', 58000, 140], ['<LB', 60000, 140],
-                                          ['<LB', 115000, 128], ['<LB', 145000, 128],
-                                          ['<LB', 200000, 32], ['<LB', 240000, 32]],
-                             'pwm_pack': [['<LLLfBBf', 0, 0, 150000, 20, 1, 0, 50],
-                                          ['<LLLfBBf', 0, 150000, 300000, 20, 1, 90, 20]]}}
+                                {'packet': ['<BBLHHH', 255, 255, 300000, 3, 6, 2],
+                                 'tone_pack': [['<LLH', 30000, 60000, 2800],
+                                               ['<LLH', 90000, 120000, 2800],
+                                               ['<LLH', 240000, 270000, 2000]],
+                                 'out_pack': [['<LB', 58000, 140], ['<LB', 60000, 140],
+                                              ['<LB', 115000, 128], ['<LB', 145000, 128],
+                                              ['<LB', 200000, 32], ['<LB', 240000, 32]],
+                                 'pwm_pack': [['<LLLfBBf', 0, 0, 150000, 20, 1, 0, 50],
+                                              ['<LLLfBBf', 0, 150000, 300000, 20, 1, 90, 20]]}}
 
     def check_dirs(self):
         """
@@ -3105,8 +3262,8 @@ class MainSettings(object):
             None
         """
         if self.save_dir != '':
-            if not os.path.isdir(dirs.main_save_dir+self.save_dir):
-                os.makedirs(dirs.main_save_dir+self.save_dir)
+            if not os.path.isdir(dirs.main_save_dir + self.save_dir):
+                os.makedirs(dirs.main_save_dir + self.save_dir)
 
     def quick_ard(self):
         """

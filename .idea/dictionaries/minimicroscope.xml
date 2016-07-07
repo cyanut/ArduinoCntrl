@@ -1,13 +1,24 @@
 <component name="ProjectDictionaryState">
   <dictionary name="minimicroscope">
     <words>
+      <w>anim</w>
+      <w>cmrmsg</w>
+      <w>daemoned</w>
+      <w>datacount</w>
       <w>datahold</w>
       <w>errormsg</w>
+      <w>expmsg</w>
       <w>fmvu</w>
+      <w>ggplot</w>
       <w>labjack</w>
+      <w>lllllbl</w>
+      <w>matplot</w>
+      <w>matplotlib</w>
       <w>messagebox</w>
       <w>msgbox</w>
+      <w>progstart</w>
       <w>refr</w>
+      <w>timediff</w>
     </words>
   </dictionary>
 </component>
