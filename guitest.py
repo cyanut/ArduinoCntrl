@@ -18,7 +18,15 @@ from pprint import pprint
 import shutil
 # noinspection PyUnresolvedReferences
 import sys
+import base64
+import zlib
+import tempfile
 
+import matplotlib
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+import matplotlib.animation as animation
+from matplotlib import style
 import numpy as np
 import Tkinter as Tk
 import tkMessageBox as tkMb
@@ -33,11 +41,23 @@ import u6
 # - Arduino GUI Geometry fine tuning
 # - Arduino optiboot.c loader: remove led flash on start?
 #################################################################
+# MatPlotLib Config
+matplotlib.use('TkAgg')
+style.use('ggplot')
+matplotlib.rcParams.update({'font.size': 8})
 # Global Variables
 NUM_LJ_CH = 14
 SAVE_ON_EXIT = True
 TIME_OFFSET = 3600*4  # EST = -4 hours.
-
+# Window Favicon
+# noinspection SpellCheckingInspection
+ICON = zlib.decompress(base64.b64decode('eJxjYGAEQgEBBiDJwZDBy'
+                                        'sAgxsDAoAHEQCEGBQaIOA'
+                                        'g4sDIgACMUj4JRMApGwQgF'
+                                        '/ykEAFXxQRc='))
+_, ICON_PATH = tempfile.mkstemp()
+with open(ICON_PATH, 'wb') as icon_file:
+    icon_file.write(ICON)
 
 # Misc. Functions
 def min_from_sec(secs, ms=False, option=None):
@@ -203,8 +223,9 @@ class MasterGUI(object):
     Main Program GUI. Launch everything from here
     """
     def __init__(self, master):
-        self.single_widget_dim = 100
         self.master = master
+        self.master.iconbitmap(default=ICON_PATH)
+        self.single_widget_dim = 100
         self.master.title('Fear Control')
         self.master.resizable(width=False, height=False)
         self.time_label_font = tkFont.Font(family='Arial', size=8)
@@ -229,8 +250,17 @@ class MasterGUI(object):
         #########################################
         # Give each setup GUI its own box
         #########################################
-        # Photometry Config
-        # Frame
+        self.render_photometry()
+        self.render_save_config()
+        self.render_lj_config()
+        self.render_arduino_config()
+        self.gui_update_window()
+
+    # Main GUI Setup
+    def render_photometry(self):
+        """
+        sets up photometry GUI
+        """
         photometry_frame = Tk.LabelFrame(self.master,
                                          text='Optional Photometry Config.',
                                          width=self.single_widget_dim*2,
@@ -255,8 +285,11 @@ class MasterGUI(object):
         self.start_gui_button.pack()
         self.start_gui_button.config(state='disabled')
         Tk.Label(photometry_frame, textvariable=self.fp_str_var).pack()
-        #########################################
-        # Save File Config
+
+    def render_save_config(self):
+        """
+        renders output save config GUI
+        """
         self.save_grab_list()
         # Primary Save Frame
         save_frame = Tk.LabelFrame(self.master,
@@ -305,8 +338,11 @@ class MasterGUI(object):
                                          command=lambda:
                                          self.save_button_options(new=True))
         self.new_save_button.pack(side=Tk.TOP)
-        #########################################
-        # LabJack Config
+
+    def render_lj_config(self):
+        """
+        labjack gui config
+        """
         # Frame
         lj_frame = Tk.LabelFrame(self.master,
                                  text='LabJack Config.',
@@ -329,8 +365,26 @@ class MasterGUI(object):
                                           text='CONFIG',
                                           command=self.lj_config)
         self.lj_config_button.pack(side=Tk.BOTTOM, expand=True)
-        #########################################
-        # Arduino Config
+        ############
+        # LabJack live stream plot
+        matplot_frame = Tk.LabelFrame(self.master, text='LabJack Live Stream')
+        matplot_frame.grid(row=4, column=0, columnspan=2, sticky=self.ALL)
+        # Matplotlib figure
+        self.lj_plot = Figure(figsize=(6, 3), dpi=100, facecolor='#efefef')
+        self.lj_plot.add_subplot(111).set_xlabel('Time (s)')
+        self.lj_plot.add_subplot(111).set_ylabel('Signal (V)')
+        self.lj_plot.add_subplot(111).set_ylim([0, 5])
+        self.lj_plot.tight_layout()
+        # Matplotlib canvas
+        matplot_canvas = FigureCanvasTkAgg(self.lj_plot, matplot_frame)
+        matplot_canvas.show()
+        matplot_canvas.get_tk_widget().pack(side=Tk.TOP, fill=Tk.BOTH, expand=True)
+
+    def render_arduino_config(self):
+        """
+        arduino and progress bar gui setup
+        and various debug functions
+        """
         # Frame
         self.ard_preset_list = []
         self.ard_bckgrd_height = 260
@@ -341,6 +395,7 @@ class MasterGUI(object):
         ard_frame.grid(row=0,
                        rowspan=3,
                        column=1,
+                       columnspan=2,
                        sticky=self.ALL)
         Tk.Label(ard_frame,
                  text='Last used settings shown. '
@@ -485,8 +540,6 @@ class MasterGUI(object):
         self.cmr_toggle_button = Tk.Checkbutton(ard_frame, variable=self.cmr_toggle_var, text='Camera',
                                                 onvalue=1, offvalue=0)
         self.cmr_toggle_button.grid(row=0, column=74, sticky=Tk.E)
-        # Update Window
-        self.gui_update_window()
 
     # General GUI Functions
     def gui_canvas_init(self):
@@ -2927,7 +2980,7 @@ class LJU6(u6.U6):
                             save_file.write(str(r['AIN{}'.format(self.ch_num[i])][each])+',')
                         save_file.write('\n')
                 except Queue.Empty:
-                    print 'QUEUE IS EMPTY STOPPING (MOVE THIS LINE TO GUI)'
+                    print 'QUEUE IS EMPTY STOPPING (MOVE THIS LINE TO GUI)'*20
                     self.running = False
                     break
 
@@ -3126,3 +3179,86 @@ if __name__ == '__main__':
     if SAVE_ON_EXIT:
         dirs.save()
 #################################################################
+import threading
+import time
+import Queue
+import copy
+import matplotlib
+matplotlib.use('TkAgg')
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+import Tkinter as Tk
+import matplotlib.animation as animation
+from matplotlib import style
+from datetime import datetime
+
+style.use('ggplot')
+
+f=Figure(figsize=(5,4),dpi=100)
+a=f.add_subplot(111)
+
+
+data = []
+
+
+def animate(i):
+  xar = []
+  yar = []
+  for each in data:
+    x = int(each[0])
+    y = int(each[1])
+    xar.append(x)
+    yar.append(y)
+
+  a.clear()
+  a.plot(xar, yar)
+done = False
+
+def dataput():
+  i = 0
+  while True:
+    time.sleep(0.05)
+    q.put_nowait(copy.deepcopy(i))
+    q.put_nowait(copy.deepcopy(i**2))
+    i += 1
+    if i == 1000:
+      print (datetime.now()-start).seconds+(datetime.now()-start).microseconds/1000000
+      done =True
+      break
+
+def datapull():
+  with open('desktop/file.csv','w') as f:
+    while True:
+      time.sleep(0.00001)
+      if done==True:
+        break
+      try:
+        msg1 = q.get()
+        msg2 = q.get()
+        f.write('{},{}'.format(msg1,msg2))
+        data.append([msg1, msg2])
+      except:
+        pass
+
+class PageThree():
+  def __init__(self,root):
+
+    canvas = FigureCanvasTkAgg(f,root)
+    canvas.show()
+    canvas.get_tk_widget().pack(side=Tk.TOP,fill=Tk.BOTH,expand=True)
+
+start = datetime.now()
+q = Queue.Queue()
+
+t=threading.Thread(target = dataput)
+t.daemon=True
+t.start()
+
+k=threading.Thread(target = datapull)
+k.daemon=True
+k.start()
+
+root = Tk.Tk()
+app = PageThree(root)
+ani=animation.FuncAnimation(f,animate,interval=100)
+root.mainloop()
