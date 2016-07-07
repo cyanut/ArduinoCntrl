@@ -110,6 +110,7 @@ void setup(){
   //Setting up SERIAL
   Serial.begin(115200);
   //BEFOR STARTING, PINS SHOULD BE LOW
+   LED_START_FLASHES = 0
    DDRD = 255;
    DDRB = 255;
    PORTD = B0;

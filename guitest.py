@@ -230,6 +230,8 @@ class MasterGUI(object):
         self.ard_ser = None
         self.lj_queue = Queue.Queue()
         self.lj_instance = None
+        self.lj_connected = False
+        self.lj_device = None
         #########################################
         # Give each setup GUI its own box
         #########################################
@@ -459,7 +461,7 @@ class MasterGUI(object):
                                                                         sticky=self.ALL)
         Tk.Label(ard_frame, anchor=Tk.W,
                  textvariable=self.lj_status,
-                 relief=Tk.SUNKEN).grid(row=5, column=25, columnspan=35,
+                 relief=Tk.SUNKEN).grid(row=5, column=25, columnspan=70,
                                         sticky=self.ALL)
         self.lj_status.set('null')
         # Update Window
@@ -593,70 +595,45 @@ class MasterGUI(object):
                              parent=self.master)
 
     def gui_queue_process(self, queue, success_msg, fail_msg,
-                          success_fn=None, fail_fn=None, rate=100):
+                          success_fn=None, fail_fn=None,
+                          header='<no_header>', header_var=None,
+                          rate=100):
         """
         Processes queues passed to threads
         """
+        if header is None:
+            header = []
         rerun = False
         try:
-            print "###################     "+str(rate)
-            print 1
-            print success_msg, fail_msg
-            print 2
-            print queue
             queue_msg = queue.get(0)
-
-            print queue_msg
-            print 3
-            if queue_msg in success_msg:
-                print 4
-                print success_msg
-                print 5
+            if queue_msg.startswith(header):
+                header_var.set(queue_msg.replace(header, ''))
+                rerun = True
+            elif queue_msg in success_msg:
                 success_msg.remove(queue_msg)
-                print 6
-                print success_msg
-                print 7
                 if len(success_msg) == 0:
-                    print 8
-                    print str(rate)+'proceeding'
-                    print 9
                     if success_fn is not None:
-                        print 10
                         success_fn()
-                        print 11
                     else:
-                        print str(rate)+"PUTTNIG"
-                        print 12
-                        self.master_queue.put(success_msg[0])
-                        print 13
+                        self.master_queue.put(queue_msg)
                 else:
-                    print 14
-                    print "RUNNING AGAIN"
-                    print 15
                     rerun = True
-                    print 16
             elif queue_msg in fail_msg:
-                print 17
                 if fail_fn is not None:
-                    print 18
                     fail_fn()
-                    print 19
                 else:
-                    print 20
-                    self.master_queue.put(fail_msg)
-                    print 21
+                    self.master_queue.put(fail_msg[0])
         except Queue.Empty:
-            print 22
             rerun = True
-            print 23
         if rerun:
-            print 24
-            print "RUNNING AGAIN   "+str(rate)
-            print 25
             self.master.after(rate, lambda:
-                              self.gui_queue_process(queue, success_msg, fail_msg,
-                                                     success_fn, fail_fn, rate))
-        print 26
+                              self.gui_queue_process(queue=queue,
+                                                     success_msg=success_msg,
+                                                     fail_msg=fail_msg,
+                                                     success_fn=success_fn,
+                                                     fail_fn=fail_fn,
+                                                     header=header, header_var=header_var,
+                                                     rate=rate))
 
     # Save Functions
     def save_grab_list(self):
@@ -1068,9 +1045,18 @@ class MasterGUI(object):
         Check if valid settings, make directories, and start progress bar
         """
         self.ard_queue.queue.clear()
-        self.ard_ser = ArduinoComm(self.ard_status, self.ard_queue)
+        self.ard_ser = ArduinoComm(self.ard_queue)
+        if not self.lj_connected:
+            try:
+                self.lj_device = LJU6()
+                self.lj_connected = True
+            except (LabJackPython.LabJackException, LabJackPython.NullHandleException):
+                self.lj_status.set('** LabJack is not connected or '
+                                   'is occupied by another program.'
+                                   'Please reconnect the device.')
         self.lj_queue.queue.clear()
-        self.lj_instance = LabJackComm(self.lj_status, self.lj_queue)
+        self.lj_instance = LabJackComm(self.lj_queue, self.lj_device)
+        self.master_queue.queue.clear()
         if len(self.save_dir_list) == 0 and len(self.results_dir_used) == 0 and dirs.settings.save_dir == '':
             tkMb.showinfo('Error!',
                           'You must first create a directory to save data output.',
@@ -1081,13 +1067,17 @@ class MasterGUI(object):
         # Start devices
         self.ard_ser.start()
         self.lj_instance.start()
-        # Process the queue to see if we succeeded in connecting
+        # Process the queues from device threads to see if we succeeded in connecting
         self.gui_queue_process(success_msg=[self.ard_ser.success_msg],
                                fail_msg=[self.ard_ser.fail_msg],
-                               queue=self.ard_queue, rate=8)
+                               queue=self.ard_queue, rate=10,
+                               header=self.ard_ser.msg_header,
+                               header_var=self.ard_status)
         self.gui_queue_process(success_msg=[self.lj_instance.success_msg],
                                fail_msg=[self.lj_instance.fail_msg],
-                               queue=self.lj_queue, rate=9)
+                               queue=self.lj_queue, rate=10,
+                               header=self.lj_instance.msg_header,
+                               header_var=self.lj_status)
         self.gui_queue_process(success_msg=[self.ard_ser.success_msg,
                                             self.lj_instance.success_msg],
                                fail_msg=[self.ard_ser.fail_msg,
@@ -1105,7 +1095,8 @@ class MasterGUI(object):
         self.progbar.stop()
         self.run_bulk_toggle(running=False)
         try:
-            self.ard_ser.reset('Procedure manually aborted.')
+            self.ard_ser.reset()
+            self.ard_status.set('Procedure manually terminated.')
         except AttributeError:
             self.ard_status.set('Procedure terminated.')
 
@@ -1142,7 +1133,7 @@ class MasterGUI(object):
                                   i[5], timePhaseShift])
         try:
             self.ard_status.set('Success! Connected to '
-                                'Serial Port [{}]. '
+                                'Port [{}]. '
                                 'Sending data '
                                 'packets...'.format(self.ard_ser.ser_port))
             self.ard_ser.send_packets([system_time],
@@ -1151,13 +1142,14 @@ class MasterGUI(object):
                                       dirs.settings.ard_last_used['out_pack'],
                                       pwm_pack_send)
             self.ard_status.set('Success! Connected to '
-                                'Serial Port [{}]. '
+                                'Port [{}]. '
                                 'Data packets sent'.format(self.ard_ser.ser_port))
             self.ard_ser.send_to_ard(pack("<B", 1))
             # 3. Start the GUI Prog Bar
             message = self.progbar.start()
             if message == 'finished':
-                self.ard_ser.reset('Procedure successful.')
+                self.ard_ser.reset()
+                self.ard_status.set('Procedure successfully finished.')
         except serial.serialutil.SerialException:
             tkMb.showwarning('Error!', 'Arduino became disconnected!\n\n'
                                        'Reconnect the device and try again.',
@@ -2327,7 +2319,7 @@ class ArduinoGUI(GUI):
         scroll_frame.finalize()
         self.center()
         geometry = self.platform_geometry(windows='1000x400',
-                                          darwin='257x272')
+                                          darwin='1110x272')
         if geometry:
             self.root.geometry(geometry)
         else:
@@ -2471,7 +2463,7 @@ class ArduinoComm(threading.Thread):
     """
     Handles serial communication with arduino
     """
-    def __init__(self, status_var, queue):
+    def __init__(self, queue):
         threading.Thread.__init__(self)
         self.daemon = True
         self.baudrate = 115200
@@ -2479,10 +2471,10 @@ class ArduinoComm(threading.Thread):
         # Markers are unicode chrs '<' and '>'
         self.start_marker, self.end_marker = 60, 62
         self.serial = None
-        self.status_var = status_var
         self.queue = queue
         self.success_msg = 'SuccessArd'
         self.fail_msg = 'FailedArd'
+        self.msg_header = '<ardmsg>'
 
     def send_to_ard(self, send_str):
         """
@@ -2526,24 +2518,33 @@ class ArduinoComm(threading.Thread):
         """
         Tries every possible serial port
         """
+        # We can't directly access the string variables
+        # for arduino or labjack status messages as this
+        # gets screwed up with threading.
+        # so we queue up the messages as well with
+        # a type specific header
         ports = list_serial_ports()
-        self.status_var.set('Connecting to Port '
-                            '[{}]...'.format(self.ser_port))
+        self.queue.put('{}Connecting to Port '
+                       '[{}]...'.format(self.msg_header, self.ser_port))
         connected = self.try_serial(self.ser_port)
         if connected:
+            self.queue.put('{}Success! Connected to Port '
+                           '[{}].'.format(self.msg_header, self.ser_port))
             self.queue.put(self.success_msg)
             return
         elif not connected:
             for port in ports:
-                self.status_var.set('Failed. Attempting next Port '
-                                    '[{}]...'.format(port))
                 if self.try_serial(port):
                     self.ser_port = port
                     dirs.settings.ser_port = port
+                    self.queue.put('{}** Failed to connect. '
+                                   'Attempting next Port '
+                                   '[{}]...'.format(self.msg_header, port))
                     self.queue.put(self.success_msg)
                     return
-            self.status_var.set('Failed to Connect to Arduino! '
-                                'Please make sure the device is plugged in.')
+            self.queue.put('{}** Arduino cannot be reached! '
+                           'Please make sure the device '
+                           'is plugged in.'.format(self.msg_header))
             self.queue.put(self.fail_msg)
             return
 
@@ -2557,7 +2558,7 @@ class ArduinoComm(threading.Thread):
             while self.serial.inWaiting() == 0:
                 time.sleep(0.1)
                 time_diff = get_time_diff(start)
-                if time_diff > 3000:
+                if time_diff > 3500:
                     return False
             msg = self.get_from_ard()
         if msg == 'Arduino is ready':
@@ -2581,7 +2582,7 @@ class ArduinoComm(threading.Thread):
         except (serial.SerialException, IOError):
             return False
 
-    def reset(self, message=''):
+    def reset(self):
         """
         Resets serial connection
         Useful for flushing
@@ -2589,59 +2590,196 @@ class ArduinoComm(threading.Thread):
         self.serial.setDTR(False)
         time.sleep(0.022)
         self.serial.setDTR(True)
-        if message != '':
-            self.status_var.set(message)
 
 
-# LabJack Communication and Reading
+##################
+# LabJack
+# Check LJ Connections
 class LabJackComm(threading.Thread):
     """
     Handles reading and writing with LabJack
     """
-    def __init__(self, status_var, queue):
+    def __init__(self, queue, lj_device):
         threading.Thread.__init__(self)
         self.daemon = True
-        self.status_var = status_var
         self.queue = queue
         self.success_msg = 'SuccessLJ'
         self.fail_msg = 'FailedLJ'
-        self.instance = None
+        self.msg_header = '<ljmsg>'
+        self.device = lj_device
 
     def run(self):
         """
         Attempts to connect to Labjack
         """
-        self.status_var.set('Connecting to LabJack...')
+        self.queue.put('{}Connecting to LabJack...'.format(self.msg_header))
         try:
-            self.instance = u6.U6()
-            self.status_var.set('Connected to LabJack!')
+            self.device.close()
+            self.device.open()
+            self.queue.put('{}Connected to LabJack!'.format(self.msg_header))
             self.queue.put(self.success_msg)
             return
-        except LabJackPython.LabJackException:
+        except (LabJackPython.LabJackException, AttributeError):
             try:
-                self.status_var.set('Failed. Attempting to close '
-                                    'previous instances...')
-                u6.U6().close()
+                self.queue.put('{}** Failed to connect. '
+                               'Attempting a '
+                               'hard reset...'.format(self.msg_header))
                 time.sleep(2)
-                self.instance = u6.U6()
-                self.status_var.set('Connected to LabJack!')
+                self.device.hardReset()
+                time.sleep(2)
+                self.device = LJU6()
+                self.queue.put('{}Connected to LabJack!'.format(self.msg_header))
                 self.queue.put(self.success_msg)
                 return
-            except LabJackPython.LabJackException:
-                try:
-                    self.status_var.set('Failed. Attempting a '
-                                        'hard reset...')
-                    u6.U6().hardReset()
-                    time.sleep(3)
-                    self.instance = u6.U6()
-                    self.status_var.set('Connected to LabJack!')
-                    self.queue.put(self.success_msg)
-                    return
-                except LabJackPython.LabJackException:
-                    self.status_var.set('LabJack cannot be reached! '
-                                        'Please reconnect the device.')
-                    self.queue.put(self.fail_msg)
-                    return
+            except (LabJackPython.LabJackException, AttributeError):
+                self.queue.put('{}** LabJack cannot be reached! '
+                               'Please reconnect the device.'.format(self.msg_header))
+                self.queue.put(self.fail_msg)
+                return
+
+
+# Main LabJack class
+# noinspection PyDefaultArgument,PyAttributeOutsideInit,PyUnusedLocal
+class LJU6(u6.U6):
+    """
+    Modified from stock U6 to include better
+    Samples per packet / packet per request
+    determination
+    """
+    @staticmethod
+    def find_packets_per_req(scanFreq, nCh):
+        """
+        Returns optimal packets per request to use
+        """
+        if nCh == 7:
+            high = 42
+        else:
+            high = 48
+        hold = []
+        for i in range(scanFreq + 1):
+            if i % 25 == 0 and i % nCh == 0:
+                hold.append(i)
+        hold = np.asarray(hold)
+        hold = min(high, max(hold / 25))
+        hold = max(1, hold)
+        return hold
+
+    @staticmethod
+    def find_samples_per_pack(scanFreq, nCh):
+        """
+        Returns optimal samples per packet to use
+        """
+        hold = []
+        for i in range(scanFreq + 1):
+            if i % nCh == 0:
+                hold.append(i)
+        return max(hold)
+
+    def streamConfig(self, NumChannels=0, ResolutionIndex=0,
+                     SamplesPerPacket=25, SettlingFactor=0,
+                     InternalStreamClockFrequency=0, DivideClockBy256=False,
+                     ScanInterval=1, ChannelNumbers=[0],
+                     ChannelOptions=[0], ScanFrequency=None,
+                     SampleFrequency=None):
+        """
+        Sets up LJ device
+        """
+        if NumChannels != len(ChannelNumbers) or NumChannels != len(ChannelOptions):
+            raise LabJackPython.LabJackException("NumChannels must match length "
+                                                 "of ChannelNumbers and ChannelOptions")
+        if len(ChannelNumbers) != len(ChannelOptions):
+            raise LabJackPython.LabJackException("len(ChannelNumbers) doesn't "
+                                                 "match len(ChannelOptions)")
+        if (ScanFrequency is not None) or (SampleFrequency is not None):
+            if ScanFrequency is None:
+                ScanFrequency = SampleFrequency
+            if ScanFrequency < 1000:
+                if ScanFrequency < 25:
+                    # below 25 ScanFreq, S/P is some multiple of nCh less than SF.
+                    SamplesPerPacket = self.find_samples_per_pack(ScanFrequency, NumChannels)
+                DivideClockBy256 = True
+                ScanInterval = 15625 / ScanFrequency
+            else:
+                DivideClockBy256 = False
+                ScanInterval = 4000000 / ScanFrequency
+        ScanInterval = min(ScanInterval, 65535)
+        ScanInterval = int(ScanInterval)
+        ScanInterval = max(ScanInterval, 1)
+        SamplesPerPacket = max(SamplesPerPacket, 1)
+        SamplesPerPacket = int(SamplesPerPacket)
+        SamplesPerPacket = min(SamplesPerPacket, 25)
+        command = [0] * (14 + NumChannels * 2)
+        # command[0] = Checksum8
+        command[1] = 0xF8
+        command[2] = NumChannels + 4
+        command[3] = 0x11
+        # command[4] = Checksum16 (LSB)
+        # command[5] = Checksum16 (MSB)
+        command[6] = NumChannels
+        command[7] = ResolutionIndex
+        command[8] = SamplesPerPacket
+        # command[9] = Reserved
+        command[10] = SettlingFactor
+        command[11] = (InternalStreamClockFrequency & 1) << 3
+        if DivideClockBy256:
+            command[11] |= 1 << 1
+        t = pack("<H", ScanInterval)
+        command[12] = ord(t[0])
+        command[13] = ord(t[1])
+        for i in range(NumChannels):
+            command[14 + (i * 2)] = ChannelNumbers[i]
+            command[15 + (i * 2)] = ChannelOptions[i]
+        self._writeRead(command, 8, [0xF8, 0x01, 0x11])
+        self.streamSamplesPerPacket = SamplesPerPacket
+        self.streamChannelNumbers = ChannelNumbers
+        self.streamChannelOptions = ChannelOptions
+        self.streamConfiged = True
+        if InternalStreamClockFrequency == 1:
+            freq = float(48000000)
+        else:
+            freq = float(4000000)
+        if DivideClockBy256:
+            freq /= 256
+        freq = freq/ScanInterval
+        # Only happens for ScanFreq < 25, in which case
+        # this number is generated as described above
+        if SamplesPerPacket < 25:
+            self.packetsPerRequest = 1
+        elif SamplesPerPacket == 25:  # For all ScanFreq > 25.
+            self.packetsPerRequest = self.find_packets_per_req(ScanFrequency, NumChannels)
+        # Such that PacketsPerRequest*SamplesPerPacket % NumChannels == 0,
+        # where min P/R is 1 and max 48 for nCh 1-6,8
+        # and max 42 for nCh 7.
+        self.SamplesPerPacket = SamplesPerPacket
+
+
+# LabJack Streaming
+class LJStreamDataReader(object):
+    """
+    Streams data to a queue until exit
+    """
+    def __init__(self, device):
+        self.device = device
+        self.data = Queue.Queue()
+        self.datacountmain = 0
+        self.datacountaux1 = 0
+        self.datacountaux2 = 0
+        self.running = False
+        self.time_start_read = 0
+        self.n_ch = len(dirs.settings.lj_last_used['ch_num'])
+
+    def read_stream_data(self):
+        """
+        Reads from stream and puts in queue
+        """
+        self.running = True
+        self.device.streamStart()
+        self.time_start_read = datetime.now()
+        while True:
+            return_dict = self.device.streamData(convert=False).next()
+            self.data.put_nowait(copy.deepcopy(return_dict))
+            self.datacountaux1 += 1
+
 
 
 #################################################################
@@ -2757,7 +2895,7 @@ class MainSettings(object):
                              'tone_pack': [['<LLH', 120000, 150000, 2800]],
                              'out_pack': [['<LB', 148000, 4], ['<LB', 150000, 4]],
                              'pwm_pack': []},
-                            'too much':
+                            'example 2':
                             {'packet': ['<BBLHHH', 255, 255, 300000, 3, 6, 2],
                              'tone_pack': [['<LLH', 30000, 60000, 2800],
                                            ['<LLH', 90000, 120000, 2800],

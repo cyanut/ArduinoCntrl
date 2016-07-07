@@ -1,6 +1,7 @@
 <component name="ProjectDictionaryState">
   <dictionary name="TiangeLi">
     <words>
+      <w>ardmsg</w>
       <w>arduino</w>
       <w>baudrate</w>
       <w>bblhhh</w>
@@ -8,6 +9,9 @@
       <w>cdquit</w>
       <w>closebutton</w>
       <w>cntrl</w>
+      <w>configed</w>
+      <w>datacountaux</w>
+      <w>datacountmain</w>
       <w>fctr</w>
       <w>frcl</w>
       <w>indiv</w>
@@ -15,7 +19,9 @@
       <w>intv</w>
       <w>isos</w>
       <w>isosbestic</w>
+      <w>ljmsg</w>
       <w>mins</w>
+      <w>noheader</w>
       <w>preresults</w>
       <w>prog</w>
       <w>progbar</w>
