@@ -18,15 +18,14 @@ from pprint import pprint
 import shutil
 # noinspection PyUnresolvedReferences
 import sys
-import base64
-import zlib
-import tempfile
 
 import matplotlib
+matplotlib.use('TkAgg')
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import matplotlib.animation as animation
 from matplotlib import style
+style.use('ggplot')
 import numpy as np
 import Tkinter as Tk
 import tkMessageBox as tkMb
@@ -42,22 +41,11 @@ import u6
 # - Arduino optiboot.c loader: remove led flash on start?
 #################################################################
 # MatPlotLib Config
-matplotlib.use('TkAgg')
-style.use('ggplot')
 matplotlib.rcParams.update({'font.size': 8})
 # Global Variables
 NUM_LJ_CH = 14
 SAVE_ON_EXIT = True
 TIME_OFFSET = 3600*4  # EST = -4 hours.
-# Window Favicon
-# noinspection SpellCheckingInspection
-ICON = zlib.decompress(base64.b64decode('eJxjYGAEQgEBBiDJwZDBy'
-                                        'sAgxsDAoAHEQCEGBQaIOA'
-                                        'g4sDIgACMUj4JRMApGwQgF'
-                                        '/ykEAFXxQRc='))
-_, ICON_PATH = tempfile.mkstemp()
-with open(ICON_PATH, 'wb') as icon_file:
-    icon_file.write(ICON)
 
 # Misc. Functions
 def min_from_sec(secs, ms=False, option=None):
@@ -224,7 +212,6 @@ class MasterGUI(object):
     """
     def __init__(self, master):
         self.master = master
-        self.master.iconbitmap(default=ICON_PATH)
         self.single_widget_dim = 100
         self.master.title('Fear Control')
         self.master.resizable(width=False, height=False)
@@ -3179,86 +3166,3 @@ if __name__ == '__main__':
     if SAVE_ON_EXIT:
         dirs.save()
 #################################################################
-import threading
-import time
-import Queue
-import copy
-import matplotlib
-matplotlib.use('TkAgg')
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-import Tkinter as Tk
-import matplotlib.animation as animation
-from matplotlib import style
-from datetime import datetime
-
-style.use('ggplot')
-
-f=Figure(figsize=(5,4),dpi=100)
-a=f.add_subplot(111)
-
-
-data = []
-
-
-def animate(i):
-  xar = []
-  yar = []
-  for each in data:
-    x = int(each[0])
-    y = int(each[1])
-    xar.append(x)
-    yar.append(y)
-
-  a.clear()
-  a.plot(xar, yar)
-done = False
-
-def dataput():
-  i = 0
-  while True:
-    time.sleep(0.05)
-    q.put_nowait(copy.deepcopy(i))
-    q.put_nowait(copy.deepcopy(i**2))
-    i += 1
-    if i == 1000:
-      print (datetime.now()-start).seconds+(datetime.now()-start).microseconds/1000000
-      done =True
-      break
-
-def datapull():
-  with open('desktop/file.csv','w') as f:
-    while True:
-      time.sleep(0.00001)
-      if done==True:
-        break
-      try:
-        msg1 = q.get()
-        msg2 = q.get()
-        f.write('{},{}'.format(msg1,msg2))
-        data.append([msg1, msg2])
-      except:
-        pass
-
-class PageThree():
-  def __init__(self,root):
-
-    canvas = FigureCanvasTkAgg(f,root)
-    canvas.show()
-    canvas.get_tk_widget().pack(side=Tk.TOP,fill=Tk.BOTH,expand=True)
-
-start = datetime.now()
-q = Queue.Queue()
-
-t=threading.Thread(target = dataput)
-t.daemon=True
-t.start()
-
-k=threading.Thread(target = datapull)
-k.daemon=True
-k.start()
-
-root = Tk.Tk()
-app = PageThree(root)
-ani=animation.FuncAnimation(f,animate,interval=100)
-root.mainloop()
