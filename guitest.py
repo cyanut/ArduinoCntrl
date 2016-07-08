@@ -257,11 +257,60 @@ class MasterGUI(object):
         self.render_saves()
         self.render_lj()
         self.render_arduino()
+        self.time = datetime.now()
         ###############
         # experimental stuff
-        Example(self.master).grid(row=20, column=0)
+        Example(self.master).grid(row=20, column=1, sticky=Tk.W)
+        img = PhotoImage(Image.open(r'C:\Users\Tiange\Desktop\New folder\frame_0_delay-0.03s.gif'))
+        self.panel = Tk.Label(self.master, image=img)
+        self.panel.grid(row=20, column=0)
+        self.frame = 0
+        self.master.after(0, self.callback)
+        self.img_queue = Queue.Queue()
+        self.img_queue.put_nowait(self.frame)
+        m = threading.Thread(target=self.temp_img_handler)
+        m.daemon = True
+        self.master.after(5000, m.start)
         #########################################
         self.gui_update_window()
+
+    # experimental methods
+    def temp_img_handler(self):
+        """deletes temp imgs"""
+        # add a new condition to window close: delete temp img directory
+        # E.G.!!!
+        #
+        #
+        # add to hard exit allow: shutil.rmtree(r'C:\Users\Tiange\Desktop\New folder')
+        while True:
+            try:
+                self.to_remove = self.img_queue.get()
+                break
+            except Queue.Empty:
+                pass
+            time.sleep(0.05)
+        while True:
+            try:
+                os.remove(r'C:\Users\Tiange\Desktop\New folder\frame_{}_delay-0.03s.gif'.format(self.to_remove))
+                self.to_remove = self.img_queue.get()
+            except (Queue.Empty, WindowsError, AttributeError):
+                pass
+            time.sleep(0.05)
+
+    def callback(self):
+        """exp"""
+        self.frame += 1
+        if self.frame > 139:
+            print 'done'
+            return
+        print (datetime.now() - self.time).seconds * 1000 + (datetime.now() - self.time).microseconds / 1000
+        name = r'C:\Users\Tiange\Desktop\New folder\frame_{}_delay-0.03s.gif'.format(self.frame)
+        self.img_queue.put_nowait(self.frame)
+        img2 = PhotoImage(Image.open(name))
+        self.panel.configure(image=img2)
+        self.panel.image = img2
+        self.time = datetime.now()
+        self.master.after(60, self.callback)
 
     # GUI setup
     def render_photometry(self):
@@ -3363,6 +3412,7 @@ class MainSettings(object):
 #################
 # Experimental stuff here
 import random
+from PIL.ImageTk import Image, PhotoImage
 
 
 # noinspection PyMethodMayBeStatic
@@ -3383,7 +3433,7 @@ class Example(Tk.Frame):
     def __init__(self, *args, **kwargs):
         Tk.Frame.__init__(self, *args, **kwargs)
         self.servo = ServoDrive()
-        self.canvas = Tk.Canvas(self, background="black")
+        self.canvas = Tk.Canvas(self, background="black", height=216, width=288)
         self.canvas.pack(side="top", fill="both", expand=True)
 
         # create lines for velocity and torque
