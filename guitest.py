@@ -865,16 +865,19 @@ class MasterGUI(object):
             msg = self.camera.frame_give_queue.get_nowait()
             if msg == '<begin>':
                 self.camera_recording = True
-                self.master.after(30, self.record)
+                self.master.after(1, self.record)
                 return
             elif msg == '<end>':
                 self.camera_recording = False
-                self.master.after(30, self.record)
+                self.master.after(1, self.record)
                 return
             else:
                 if self.camera_recording:
-                    self.camera_panel.configure(image=msg)
-                    self.camera_panel.image = msg
+                    img = PhotoImage(Image.fromarray(
+                        msg).resize(
+                        (288, 216)))#, Image.ANTIALIAS))
+                    self.camera_panel.configure(image=img)
+                    self.camera_panel.image = img
         except Queue.Empty:
             pass
         if not self.camera_recording:
@@ -884,6 +887,7 @@ class MasterGUI(object):
             self.camera_panel.configure(image=img)
             self.camera_panel.image = img
         self.master.after(15, self.record)
+
 
     # LabJack Functions
     def lj_config(self):
@@ -1426,7 +1430,7 @@ class MasterGUI(object):
                 self.gui_queue_process(queue=self.lj_queue, success_msg=['none'], fail_msg=['none'],
                                        header='<ljmsg>', header_var=self.lj_status)
             if self.cmr_toggle_var.get() == 1:
-                self.camera.get_temp_img = False
+                # self.camera.get_temp_img = False
                 camera_rec = threading.Thread(target=self.camera.run)
                 camera_rec.daemon = True
                 camera_rec.start()
@@ -3219,8 +3223,10 @@ class FireFly(object):
         self.running = True
         for i in range(num_frames):
             if self.running:
-                self.frame_give_queue.put_nowait(PhotoImage(Image.fromarray(
-                    self.context.appendAVI()).resize((288, 216), Image.ANTIALIAS)))
+                if i % 2 == 0:
+                    self.frame_give_queue.put_nowait(self.context.appendAVI())
+                else:
+                    self.context.appendAVI()
             else:
                 self.frame_give_queue.put_nowait('<end>')
                 break
