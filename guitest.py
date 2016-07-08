@@ -27,6 +27,7 @@ import tkFont
 import Pmw
 import LabJackPython
 import u6
+from PIL.ImageTk import Image, PhotoImage
 try:
     # noinspection PyUnresolvedReferences
     import flycapture2a as fc2
@@ -245,6 +246,7 @@ class MasterGUI(object):
         self.cmr_queue = Queue.Queue()
         self.camera = None
         self.cmr_connected = False
+        self.camera_recording = False
         ########################################
         # progress bar components
         self.prog_is_running = False
@@ -257,60 +259,12 @@ class MasterGUI(object):
         self.render_saves()
         self.render_lj()
         self.render_arduino()
-        self.time = datetime.now()
+        self.render_camera()
         ###############
         # experimental stuff
         Example(self.master).grid(row=20, column=1, sticky=Tk.W)
-        img = PhotoImage(Image.open(r'C:\Users\Tiange\Desktop\New folder\frame_0_delay-0.03s.gif'))
-        self.panel = Tk.Label(self.master, image=img)
-        self.panel.grid(row=20, column=0)
-        self.frame = 0
-        self.master.after(0, self.callback)
-        self.img_queue = Queue.Queue()
-        self.img_queue.put_nowait(self.frame)
-        m = threading.Thread(target=self.temp_img_handler)
-        m.daemon = True
-        self.master.after(5000, m.start)
         #########################################
         self.gui_update_window()
-
-    # experimental methods
-    def temp_img_handler(self):
-        """deletes temp imgs"""
-        # add a new condition to window close: delete temp img directory
-        # E.G.!!!
-        #
-        #
-        # add to hard exit allow: shutil.rmtree(r'C:\Users\Tiange\Desktop\New folder')
-        while True:
-            try:
-                self.to_remove = self.img_queue.get()
-                break
-            except Queue.Empty:
-                pass
-            time.sleep(0.05)
-        while True:
-            try:
-                os.remove(r'C:\Users\Tiange\Desktop\New folder\frame_{}_delay-0.03s.gif'.format(self.to_remove))
-                self.to_remove = self.img_queue.get()
-            except (Queue.Empty, WindowsError, AttributeError):
-                pass
-            time.sleep(0.05)
-
-    def callback(self):
-        """exp"""
-        self.frame += 1
-        if self.frame > 139:
-            print 'done'
-            return
-        print (datetime.now() - self.time).seconds * 1000 + (datetime.now() - self.time).microseconds / 1000
-        name = r'C:\Users\Tiange\Desktop\New folder\frame_{}_delay-0.03s.gif'.format(self.frame)
-        self.img_queue.put_nowait(self.frame)
-        img2 = PhotoImage(Image.open(name))
-        self.panel.configure(image=img2)
-        self.panel.image = img2
-        self.time = datetime.now()
-        self.master.after(60, self.callback)
 
     # GUI setup
     def render_photometry(self):
@@ -591,7 +545,15 @@ class MasterGUI(object):
             self.cmr_status.set('FlyCapture2a Module not detected.')
             self.cmr_toggle_var.set(0)
 
-    # def render_camera
+    def render_camera(self):
+        """sets up camera feed"""
+        self.camera_panel = Tk.Label(self.master)
+        self.camera_panel.grid(row=20, column=0)
+        if ENABLE_CAMERA:
+            self.camera = FireFly(exp_lock=self.exp_lock,
+                                  report_queue=self.cmr_queue)
+            self.cmr_connected = True
+        self.record()
 
     # General GUI Functions
     def gui_canvas_init(self):
@@ -696,8 +658,7 @@ class MasterGUI(object):
                                                   window_height,
                                                   x_pos, y_pos))
 
-    @staticmethod
-    def gui_debug():
+    def gui_debug(self):
         """
         Under the hood stuff here
         """
@@ -705,8 +666,8 @@ class MasterGUI(object):
         print 'SETTINGS'
         pprint(vars(dirs.settings))
         print '#' * 15
-        print 'ACTIVE THREADS'
-        print threading.active_count()
+        print 'ACTIVE THREADS: {}'.format(threading.active_count())
+        print 'CAMERA QUEUE COUNT: {}'.format(self.camera.frame_give_queue.qsize())
 
     def hard_exit(self, allow=True):
         """
@@ -735,11 +696,11 @@ class MasterGUI(object):
             # ... and camera
             if ENABLE_CAMERA:
                 try:
-                    main.camera.close()
+                    self.camera.close()
                     print 'Camera Closed'
                 except fc2.ApiError:
-                    pass
                     cmr_error = True
+                    pass
                 except AttributeError:
                     pass
             if lj_error and cmr_error:
@@ -896,6 +857,33 @@ class MasterGUI(object):
                 )
             )
             dirs.settings.save_dir = self.save_dir_to_use
+
+    # Camera methods
+    def record(self):
+        """live streaming"""
+        try:
+            msg = self.camera.frame_give_queue.get_nowait()
+            if msg == '<begin>':
+                self.camera_recording = True
+                self.master.after(30, self.record)
+                return
+            elif msg == '<end>':
+                self.camera_recording = False
+                self.master.after(30, self.record)
+                return
+            else:
+                if self.camera_recording:
+                    self.camera_panel.configure(image=msg)
+                    self.camera_panel.image = msg
+        except Queue.Empty:
+            pass
+        if not self.camera_recording:
+            img = PhotoImage(Image.fromarray(
+                self.camera.context.tempImgGet()).resize(
+                (288, 216), Image.ANTIALIAS))
+            self.camera_panel.configure(image=img)
+            self.camera_panel.image = img
+        self.master.after(15, self.record)
 
     # LabJack Functions
     def lj_config(self):
@@ -1438,6 +1426,7 @@ class MasterGUI(object):
                 self.gui_queue_process(queue=self.lj_queue, success_msg=['none'], fail_msg=['none'],
                                        header='<ljmsg>', header_var=self.lj_status)
             if self.cmr_toggle_var.get() == 1:
+                self.camera.get_temp_img = False
                 camera_rec = threading.Thread(target=self.camera.run)
                 camera_rec.daemon = True
                 camera_rec.start()
@@ -3207,42 +3196,42 @@ class FireFly(object):
 
     def __init__(self, exp_lock, report_queue):
         self.context = fc2.Context()
-        self.exp_lock = exp_lock
         self.context.connect(*self.context.get_camera_from_index(0))
         self.context.set_video_mode_and_frame_rate(fc2.VIDEOMODE_640x480Y8,
                                                    fc2.FRAMERATE_30)
-        prop = self.context.get_property(fc2.FRAME_RATE)
-        self.context.set_property(**prop)
+        self.context.set_property(**self.context.get_property(fc2.FRAME_RATE))
         self.context.start_capture()
-        self.running = False
+        self.exp_lock = exp_lock
         self.report_queue = report_queue
+        self.running = False
+        self.frame = None
+        self.frame_give_queue = Queue.Queue()
 
-    def record(self, file_name, num_frames):
-        """records images to .avi"""
+    def run(self):
+        """records video"""
         self.context.set_strobe_mode(3, True, 1, 0, 10)
-        self.context.openAVI(file_name, frate=30, bitrate=1000000)
+        self.context.openAVI(dirs.results_dir + '[name] - {}.avi'.format(get_day(3)),
+                             30, 1000000)
+        num_frames = int(dirs.settings.ard_last_used['packet'][3] * 30) / 1000
+        self.exp_lock.wait()
+        self.report_queue.put_nowait('<cmrmsg>Started Recording.')
+        self.frame_give_queue.put_nowait('<begin>')
+        self.running = True
         for i in range(num_frames):
-            if not self.running:
+            if self.running:
+                self.frame_give_queue.put_nowait(PhotoImage(Image.fromarray(
+                    self.context.appendAVI()).resize((288, 216), Image.ANTIALIAS)))
+            else:
+                self.frame_give_queue.put_nowait('<end>')
                 break
-            self.context.appendAVI()
-        self.context.set_strobe_mode(3, False, 1, 0, 10)
+        self.running = False
         self.context.closeAVI()
+        self.context.set_strobe_mode(3, False, 1, 0, 10)
 
     def close(self):
         """closes camera instance"""
         self.context.stop_capture()
         self.context.disconnect()
-
-    def run(self):
-        """start camera recording"""
-        video_save_name = '[name]-{}'.format(get_day(3))
-        num_frames = (dirs.settings.ard_last_used['packet'][3] / 1000) * 30
-        self.exp_lock.wait()
-        self.report_queue.put_nowait('<cmrmsg>Started Recording.')
-        self.report_queue.put_nowait('<cmr_ready>')
-        self.running = True
-        self.record(dirs.results_dir + video_save_name, num_frames)
-        self.running = False
 
 
 #################################################################
@@ -3412,7 +3401,6 @@ class MainSettings(object):
 #################
 # Experimental stuff here
 import random
-from PIL.ImageTk import Image, PhotoImage
 
 
 # noinspection PyMethodMayBeStatic
