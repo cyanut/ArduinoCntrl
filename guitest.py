@@ -1,3 +1,4 @@
+# coding=utf-8
 """
 For use with LabJack U6 and PTGrey FMVU-03MTC-CS
 """
@@ -26,7 +27,12 @@ import tkFont
 import Pmw
 import LabJackPython
 import u6
-import flycapture2a as fc2
+try:
+    # noinspection PyUnresolvedReferences
+    import flycapture2a as fc2
+    ENABLE_CAMERA = True
+except ImportError:
+    ENABLE_CAMERA = False
 
 ################################################################
 # To do list:
@@ -251,6 +257,10 @@ class MasterGUI(object):
         self.render_saves()
         self.render_lj()
         self.render_arduino()
+        ###############
+        # experimental stuff
+        Example(self.master).grid(row=20, column=0)
+        #########################################
         self.gui_update_window()
 
     # GUI setup
@@ -420,7 +430,7 @@ class MasterGUI(object):
                                              self.ard_grab_data(True, file_in))
         self.ard_preset_menu.grid(row=as_row,
                                   column=0,
-                                  columnspan=4,
+                                  columnspan=5,
                                   sticky=self.ALL)
         self.ard_preset_menu.config(width=10)
         # Manual Arduino Setup
@@ -449,7 +459,7 @@ class MasterGUI(object):
                                                        option='sec')))
         self.ard_time_confirm = Tk.Button(ard_frame, text='Confirm',
                                           command=self.ard_get_time)
-        self.ard_time_confirm.grid(row=ts_row + 1, column=4, sticky=Tk.W)
+        self.ard_time_confirm.grid(row=ts_row + 1, column=4, sticky=self.ALL)
         # Tone Config
         self.tone_setup = Tk.Button(ard_frame, text='Tone Setup',
                                     command=lambda types='tone':
@@ -458,7 +468,7 @@ class MasterGUI(object):
         self.out_setup = Tk.Button(ard_frame, text='PWM Setup',
                                    command=lambda types='pwm':
                                    self.ard_config(types))
-        self.out_setup.grid(row=5, column=1, columnspan=3, sticky=self.ALL)
+        self.out_setup.grid(row=5, rowspan=2, column=1, columnspan=3, sticky=self.ALL)
         self.pwm_setup = Tk.Button(ard_frame, text='Simple Outputs',
                                    command=lambda types='output':
                                    self.ard_config(types))
@@ -506,7 +516,8 @@ class MasterGUI(object):
                                                command=lambda:
                                                self.device_status_msg_toggle(self.lj_toggle_var,
                                                                              self.lj_status,
-                                                                             lj_status_display))
+                                                                             lj_status_display,
+                                                                             options='lj'))
         self.lj_toggle_button.grid(row=0, column=72, sticky=Tk.E)
         # Camera
         self.cmr_status = Tk.StringVar()
@@ -525,8 +536,13 @@ class MasterGUI(object):
                                                                               self.cmr_status,
                                                                               cmr_status_display))
         self.cmr_toggle_button.grid(row=0, column=74, sticky=Tk.E)
+        if not ENABLE_CAMERA:
+            cmr_status_display.config(state=Tk.DISABLED)
+            self.cmr_toggle_button.config(state=Tk.DISABLED)
+            self.cmr_status.set('FlyCapture2a Module not detected.')
+            self.cmr_toggle_var.set(0)
 
-    def render_camera
+    # def render_camera
 
     # General GUI Functions
     def gui_canvas_init(self):
@@ -668,14 +684,15 @@ class MasterGUI(object):
             except AttributeError:
                 pass
             # ... and camera
-            try:
-                main.camera.close()
-                print 'Camera Closed'
-            except fc2.ApiError:
-                pass
-                cmr_error = True
-            except AttributeError:
-                pass
+            if ENABLE_CAMERA:
+                try:
+                    main.camera.close()
+                    print 'Camera Closed'
+                except fc2.ApiError:
+                    pass
+                    cmr_error = True
+                except AttributeError:
+                    pass
             if lj_error and cmr_error:
                 tkMb.showwarning('Warning!',
                                  'Neither the LabJack nor the Camera could be closed '
@@ -750,8 +767,7 @@ class MasterGUI(object):
                                                      header=header, header_var=header_var,
                                                      rate=rate))
 
-    @staticmethod
-    def device_status_msg_toggle(var, status, display):
+    def device_status_msg_toggle(self, var, status, display, options=None):
         """
         Hides or displays device statuses depending on
          toggle state
@@ -759,9 +775,19 @@ class MasterGUI(object):
         if var.get() == 0:
             status.set('disabled')
             display.config(state=Tk.DISABLED)
+            if options == 'lj':
+                self.exp_lock.set()
+                self.read_lock.set()
         elif var.get() == 1:
             status.set('enabled')
             display.config(state=Tk.NORMAL)
+            if options == 'lj':
+                self.exp_lock.clear()
+                self.read_lock.clear()
+        if self.ard_toggle_var.get() == 0 and self.lj_toggle_var.get() == 0 and self.cmr_toggle_var.get() == 0:
+            self.prog_on.config(state=Tk.DISABLED)
+        elif self.ard_toggle_var.get() == 1 or self.lj_toggle_var.get() == 1 or self.cmr_toggle_var.get() == 1:
+            self.prog_on.config(state=Tk.NORMAL)
 
     # Save Functions
     def save_grab_list(self):
@@ -842,11 +868,20 @@ class MasterGUI(object):
         if self.fp_bool.get() == 1:
             self.start_gui_button.config(state=Tk.NORMAL)
             ch_num, main_freq, isos_freq = dirs.settings.quick_fp()
-            state = 'Channels: {}\nMain Freq: {}Hz\nIsos Freq: {}Hz'.format(ch_num,
-                                                                            main_freq,
-                                                                            isos_freq)
+            state = 'LabJack Channels: {}\nMain Freq: {}Hz\nIsos Freq: {}Hz'.format(ch_num,
+                                                                                    main_freq,
+                                                                                    isos_freq)
             self.fp_str_var.set(state)
+            self.fp_lj_sync()
         elif self.fp_bool.get() == 0:
+            for i in dirs.settings.fp_last_used['ch_num']:
+                dirs.settings.lj_last_used['ch_num'].remove(i)
+            if len(dirs.settings.lj_last_used['ch_num']) == 0:
+                dirs.settings.lj_last_used['ch_num'].append(0)
+            dirs.settings.lj_last_used['ch_num'].sort()
+            self.lj_str_var.set('Channels:\n{}\n'
+                                '\nScan Freq: [{}Hz]'.format(dirs.settings.lj_last_used['ch_num'],
+                                                             dirs.settings.lj_last_used['scan_freq']))
             self.start_gui_button.config(state=Tk.DISABLED)
             self.fp_str_var.set('\n[N/A]\n')
 
@@ -854,14 +889,43 @@ class MasterGUI(object):
         """
         Configures photometry options
         """
+        fp_ch_num_old = copy.deepcopy(dirs.settings.fp_last_used['ch_num'])
         config = Tk.Toplevel(self.master)
         config_run = PhotometryGUI(config)
         config_run.run()
-        state = 'Channels: {}\nMain Freq: ' \
+        state = 'LabJack Channels: {}\nMain Freq: ' \
                 '{}Hz\nIsos Freq: {}Hz'.format(config_run.ch_num,
                                                config_run.stim_freq['main'],
                                                config_run.stim_freq['isos'])
+        if len([i for i in fp_ch_num_old if i in dirs.settings.lj_last_used['ch_num']]) == 3:
+            for i in fp_ch_num_old:
+                dirs.settings.lj_last_used['ch_num'].remove(i)
+        self.fp_lj_sync()
         self.fp_str_var.set(state)
+
+    def fp_lj_sync(self):
+        """
+        synchronizes fp and lj channels used
+        """
+        ch_num = dirs.settings.fp_last_used['ch_num']
+        lj_ch_num = dirs.settings.lj_last_used['ch_num']
+        for i in ch_num:
+            if i not in lj_ch_num:
+                lj_ch_num.append(i)
+        lj_n_ch = len(lj_ch_num)
+        if lj_n_ch <= 8:
+            dirs.settings.lj_last_used['ch_num'] = lj_ch_num
+            dirs.settings.lj_last_used['ch_num'].sort()
+            dirs.settings.lj_last_used['scan_freq'] = min(dirs.settings.lj_last_used['scan_freq'],
+                                                          int(50000 / lj_n_ch))
+            self.lj_str_var.set('Channels:\n{}\n'
+                                '\nScan Freq: [{}Hz]'.format(lj_ch_num, dirs.settings.lj_last_used['scan_freq']))
+        elif lj_n_ch > 8:
+            tkMb.showinfo('Warning!', 'Enabling photometry has increased the number of LabJack channels '
+                                      'in use to {}; the maximum is 8. \n\n'
+                                      'Please reconfigure LabJack settings.'.format(lj_n_ch))
+            dirs.settings.lj_last_used['ch_num'] = ch_num
+            self.lj_config()
 
     # Arduino Functions
     def ard_config(self, types):
@@ -1376,14 +1440,16 @@ class MasterGUI(object):
             self.pwm_setup.config(state=Tk.DISABLED)
             self.ard_toggle_button.config(state=Tk.DISABLED)
             self.lj_toggle_button.config(state=Tk.DISABLED)
-            self.cmr_toggle_button.config(state=Tk.DISABLED)
+            if ENABLE_CAMERA:
+                self.cmr_toggle_button.config(state=Tk.DISABLED)
         if not running:
             self.master.protocol('WM_DELETE_WINDOW',
                                  self.hard_exit)
             self.prog_off.config(state=Tk.DISABLED)
             self.prog_on.config(state=Tk.NORMAL)
             self.fp_checkbutton.config(state=Tk.NORMAL)
-            self.start_gui_button.config(state=Tk.NORMAL)
+            if self.fp_bool.get() == 1:
+                self.start_gui_button.config(state=Tk.NORMAL)
             self.save_dir_menu.config(state=Tk.NORMAL)
             self.new_save_entry.config(state=Tk.NORMAL)
             self.new_save_button.config(state=Tk.NORMAL)
@@ -1399,7 +1465,8 @@ class MasterGUI(object):
             self.pwm_setup.config(state=Tk.NORMAL)
             self.ard_toggle_button.config(state=Tk.NORMAL)
             self.lj_toggle_button.config(state=Tk.NORMAL)
-            self.cmr_toggle_button.config(state=Tk.NORMAL)
+            if ENABLE_CAMERA:
+                self.cmr_toggle_button.config(state=Tk.NORMAL)
 
 
 class ScrollFrame(object):
@@ -2612,7 +2679,7 @@ class ProgressBar(threading.Thread):
         threading.Thread.__init__(self)
         self.daemon = True
         self.canvas = canvas
-        self.segment_size = (float(ms_total_time/1000))/1000
+        self.segment_size = (float(ms_total_time / 1000)) / 1000
         self.ms_total_time = ms_total_time
         self.bar = bar
         self.time_gfx = time_gfx
@@ -2626,9 +2693,9 @@ class ProgressBar(threading.Thread):
         Starts the progress bar
         """
         if self.num_prog != 1:
-            self.canvas.move(self.bar, -self.num_prog+1, 0)
-            if (-self.num_prog+1+35) < 0:
-                text_move = max(-self.num_prog+1+35, -929)
+            self.canvas.move(self.bar, -self.num_prog + 1, 0)
+            if (-self.num_prog + 1 + 35) < 0:
+                text_move = max(-self.num_prog + 1 + 35, -929)
                 self.canvas.move(self.time_gfx, text_move, 0)
             self.num_prog, self.num_time = 1, 1
         self.start_prog = datetime.now()
@@ -2842,7 +2909,7 @@ class LabJackComm(threading.Thread):
 
 
 # Main LabJack class
-# noinspection PyDefaultArgument
+# noinspection PyDefaultArgument,PyAttributeOutsideInit
 class LJU6(u6.U6):
     """
     Modified from stock U6 to include better
@@ -2893,6 +2960,7 @@ class LJU6(u6.U6):
                 hold.append(i)
         return max(hold)
 
+    # noinspection PyUnusedLocal
     def streamConfig(self, NumChannels=1, ResolutionIndex=0,
                      SamplesPerPacket=25, SettlingFactor=0,
                      InternalStreamClockFrequency=0, DivideClockBy256=False,
@@ -2996,7 +3064,7 @@ class LJU6(u6.U6):
         self.scan_freq = dirs.settings.lj_last_used['scan_freq']
         self.n_ch = len(self.ch_num)
 
-    # noinspection PyUnboundLocalVariable
+    # noinspection PyUnboundLocalVariable,PyUnusedLocal
     def read_stream_data(self):
         """
         Reads from stream and puts in queue
@@ -3226,7 +3294,7 @@ class MainSettings(object):
         else:
             self.ser_port = '/dev/tty.usbmodem1421'
         self.save_dir = ''
-        self.fp_last_used = {'ch_num': [0, 1, 2],
+        self.fp_last_used = {'ch_num': [3, 4, 5],
                              'main_freq': 211,
                              'isos_freq': 531}
         self.lj_last_used = {'ch_num': [0, 1, 2],
@@ -3239,20 +3307,10 @@ class MainSettings(object):
         self.lj_presets = {'example': {'ch_num': [0, 1, 2, 10, 11],
                                        'scan_freq': 6250}}
         self.ard_presets = {'example':
-                                {'packet': ['<BBLHHH', 255, 255, 180000, 1, 2, 0],
-                                 'tone_pack': [['<LLH', 120000, 150000, 2800]],
-                                 'out_pack': [['<LB', 148000, 4], ['<LB', 150000, 4]],
-                                 'pwm_pack': []},
-                            'example 2':
-                                {'packet': ['<BBLHHH', 255, 255, 300000, 3, 6, 2],
-                                 'tone_pack': [['<LLH', 30000, 60000, 2800],
-                                               ['<LLH', 90000, 120000, 2800],
-                                               ['<LLH', 240000, 270000, 2000]],
-                                 'out_pack': [['<LB', 58000, 140], ['<LB', 60000, 140],
-                                              ['<LB', 115000, 128], ['<LB', 145000, 128],
-                                              ['<LB', 200000, 32], ['<LB', 240000, 32]],
-                                 'pwm_pack': [['<LLLfBBf', 0, 0, 150000, 20, 1, 0, 50],
-                                              ['<LLLfBBf', 0, 150000, 300000, 20, 1, 90, 20]]}}
+                            {'packet': ['<BBLHHH', 255, 255, 180000, 1, 2, 0],
+                             'tone_pack': [['<LLH', 120000, 150000, 2800]],
+                             'out_pack': [['<LB', 148000, 4], ['<LB', 150000, 4]],
+                             'pwm_pack': []}}
 
     def check_dirs(self):
         """
@@ -3300,6 +3358,59 @@ class MainSettings(object):
             self.fp_last_used['main_freq'],
             self.fp_last_used['isos_freq']
         ]
+
+
+#################
+# Experimental stuff here
+import random
+
+
+# noinspection PyMethodMayBeStatic
+class ServoDrive(object):
+    """stim values"""
+    def getVelocity(self):
+        """d"""
+        return random.randint(0, 50)
+
+    def getTorque(self):
+        """d"""
+        return random.randint(50, 100)
+
+
+# noinspection PyClassicStyleClass
+class Example(Tk.Frame):
+    """s"""
+    def __init__(self, *args, **kwargs):
+        Tk.Frame.__init__(self, *args, **kwargs)
+        self.servo = ServoDrive()
+        self.canvas = Tk.Canvas(self, background="black")
+        self.canvas.pack(side="top", fill="both", expand=True)
+
+        # create lines for velocity and torque
+        self.velocity_line = self.canvas.create_line(0, 0, 0, 0, fill="red")
+        self.torque_line = self.canvas.create_line(0, 0, 0, 0, fill="blue")
+
+        # start the update process
+        self.update_plot()
+
+    def update_plot(self):
+        """S"""
+        v = self.servo.getVelocity()
+        t = self.servo.getTorque()
+        self.add_point(self.velocity_line, v)
+        self.add_point(self.torque_line, t)
+        self.canvas.xview_moveto(1.0)
+        self.after(100, self.update_plot)
+
+    def add_point(self, line, y):
+        """s"""
+        coords = self.canvas.coords(line)
+        x = coords[-2] + 1
+        coords.append(x)
+        coords.append(y)
+        coords = coords[-200:]  # keep # of points to a manageable size
+        self.canvas.coords(line, *coords)
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
 
 #################################################################
