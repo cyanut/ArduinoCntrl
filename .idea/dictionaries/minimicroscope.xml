@@ -2,6 +2,7 @@
   <dictionary name="minimicroscope">
     <words>
       <w>anim</w>
+      <w>chkconn</w>
       <w>cmrmsg</w>
       <w>daemoned</w>
       <w>datacount</w>
@@ -11,14 +12,19 @@
       <w>fmvu</w>
       <w>ggplot</w>
       <w>labjack</w>
+      <w>ljdsnew</w>
       <w>lllllbl</w>
       <w>matplot</w>
       <w>matplotlib</w>
       <w>messagebox</w>
       <w>minimicroscope</w>
       <w>msgbox</w>
+      <w>proc</w>
       <w>progstart</w>
+      <w>recv</w>
       <w>refr</w>
+      <w>thrd</w>
+      <w>threadhandler</w>
       <w>timediff</w>
     </words>
   </dictionary>
