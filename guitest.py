@@ -2570,6 +2570,8 @@ class GUIThreadHandler(threading.Thread):
                             ard_thread.start()
                             self.ard_device.running = True
                         self.exp_is_running = True
+                    else:
+                        self.report_queue.put_nowait('<exp_end>Failed to Initiate one of the selected devices.')
                 elif msg == '<hardstop>':
                     self.hard_stop_experiment = True
                     try:
@@ -3258,7 +3260,7 @@ class ArduinoUno(object):
                         return False
                 except IOError:
                     return False
-            except (serial.SerialException, IOError, OSError):
+            except (serial.SerialException, IOError, OSError, AttributeError):
                 return False
 
     def check_connection(self):
@@ -3442,7 +3444,7 @@ class MainSettings(object):
     def load_examples(self):
         """Example settings"""
         if sys.platform.startswith('win'):
-            self.ser_port = 'COM1'
+            self.ser_port = 'COM4'
         else:
             self.ser_port = '/dev/tty.usbmodem1421'
         self.fp_last_used = {'ch_num': [3, 4, 5],
