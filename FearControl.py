@@ -393,7 +393,7 @@ def gfxTimeDisplay(name, dataSource, timeSegment):
 
 ####################
 # GET USER INPUTS
-"""
+
 def get_time():
     global total_time
     while True:
@@ -405,7 +405,6 @@ def get_time():
             print "You must enter an integer in seconds"
             continue
     return total_time
-"""
 
 
 def get_data_errorCheck(ask_data, types, bestLen, starts, middles, ends, dataHold):
@@ -1404,7 +1403,7 @@ prgmDir = baseDir + "prgmSettings/"
 saveDir = baseDir + "outputSaves/"
 settings = "enter_new"
 startMarker, endMarker = 60, 62
-timeOffset =
+timeOffset = 3600*4
 fullscreenMsg = ""
 num_loops, reset, mainLoopbrk = 0, 0, 0
 prevTimeStart, prevTimeStartRead = datetime.now(), datetime.now()

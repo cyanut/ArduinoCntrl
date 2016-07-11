@@ -1,40 +1,34 @@
 # coding=utf-8
 """
-For use with LabJack U6 and PTGrey FMVU-03MTC-CS
+For use with LabJack U6, PTGrey FMVU-03MTC-CS, Arduino UNO
 """
-import serial
-import time
 import os
-import glob
-import threading
-import copy
+import sys
+import time
 import math
-import calendar
+import glob
 import Queue
+import serial
+import shutil
 import pickle
-from struct import *
+import calendar
+import threading
+from struct import pack
+from pprint import pprint
+from copy import deepcopy
 from datetime import datetime
 from operator import itemgetter
-from pprint import pprint
-import shutil
-# noinspection PyUnresolvedReferences
-import sys
 
+import u6
+import Pmw
+import tkFont
 import numpy as np
 import Tkinter as Tk
+# noinspection PyUnresolvedReferences
+import flycapture2a as fc2
 import tkMessageBox as tkMb
-import tkFont
-import Pmw
-import LabJackPython
-import u6
 from PIL.ImageTk import Image, PhotoImage
-try:
-    # noinspection PyUnresolvedReferences
-    import flycapture2a as fc2
-    ENABLE_CAMERA = True
-except ImportError:
-    ENABLE_CAMERA = False
-
+from LabJackPython import LowlevelErrorException, LabJackException
 ################################################################
 # To do list:
 # - Arduino GUI Geometry fine tuning
@@ -44,88 +38,96 @@ except ImportError:
 # - correct status messages for every device for every stage
 #################################################################
 # Global Variables
-NUM_LJ_CH = 14
-SAVE_ON_EXIT = True
-TIME_OFFSET = 3600 * 4  # EST = -4 hours.
+TIME_OFFSET = 3600 * 4
+DEBUG = True
 
 
 # Misc. Functions
-def min_from_sec(secs, ms=False, option=None):
-    """
-    Turns Seconds into MM:SS
-    :param secs: seconds
-    :param ms: Boolean (return ms as well?)
-    :param option: String (min only, sec only)
-    :return:
-        String
-    """
-    output = None
-    sec = int(secs) % 60
-    mins = int(secs) // 60
-    if ms:
-        millis = int((secs - int(secs)) * 1000)
-        output = '{:0>2}:{:0>2}.{:0>3}'.format(mins, sec, millis)
-    elif not ms:
-        output = '{:0>2}:{:0>2}'.format(mins, sec)
+def format_secs(time_in_secs, report_ms=False, option=None):
+    """Turns Seconds into MM:SS"""
+    output = ''
+    secs = int(time_in_secs) % 60
+    mins = int(time_in_secs) // 60
+    if report_ms:
+        millis = int((time_in_secs - int(time_in_secs)) * 1000)
+        output = '{:0>2}:{:0>2}.{:0>3}'.format(mins, secs, millis)
+    elif not report_ms:
+        output = '{:0>2}:{:0>2}'.format(mins, secs)
     if option == 'min':
         output = '{:0>2}'.format(mins)
     elif option == 'sec':
-        output = '{:0>2}'.format(sec)
+        output = '{:0>2}'.format(secs)
     return output
 
 
-def get_time_diff(start_time, end_time=None, choice='ms'):
-    """
-    Returns time difference from starting time
-    """
+def format_daytime(options, dayformat='/', timeformat=':'):
+    """Returns day and time in various formats"""
+    time_now = datetime.now()
+    if options == 'daytime':
+        dayformat = '-'
+        timeformat = '-'
+    day = '{}{}{}{}{}'.format(time_now.year, dayformat,
+                              time_now.month, dayformat,
+                              time_now.day)
+    clock = '{:0>2}{}{:0>2}{}{:0>2}'.format(time_now.hour, timeformat,
+                                            time_now.minute, timeformat,
+                                            time_now.second)
+    if options == 'day':
+        return day
+    elif options == 'time':
+        return clock
+    elif options == 'daytime':
+        return '{}--{}'.format(day, clock)
+
+
+def time_diff(start_time, end_time=None, choice='millis'):
+    """Returns time difference from starting time"""
     if end_time is None:
         end_time = datetime.now()
     timediff = (end_time - start_time)
-    if choice == 'ms':
-        return timediff.seconds * 1000 + timediff.microseconds / 1000
-    elif choice == 'us':
+    if choice == 'millis':
+        return timediff.seconds * 1000 + int(timediff.microseconds) / 1000
+    elif choice == 'micros':
         return timediff.seconds * 1000 + float(timediff.microseconds) / 1000
 
 
-def get_day(options=0):
-    """
-    Returns day and time in various formats
-    :return:
-        String
-    """
-    i = datetime.now()
-    hour = '{:0>2}'.format(i.hour)
-    minute = '{:0>2}'.format(i.minute)
-    second = '{:0>2}'.format(i.second)
-    if options == 0 or options == 'day':
-        return '%s/%s/%s' % (i.year, i.month, i.day)
-    elif options == 1 or options == 'daytime':
-        return '%s-%s-%s [%s-%s-%s]' % (i.year, i.month, i.day,
-                                        hour, minute, second)
-    elif options == 2 or options == 'day2':
-        return '%s-%s-%s' % (i.year, i.month, i.day)
-    elif options == 3 or options == 'time':
-        if i.hour > 12:
-            hour = str(i.hour - 12) + 'pm'
-        if i.hour == 12:
-            hour = '12pm'
-        if i.hour < 12:
-            hour = str(i.hour) + 'am'
-        if i.hour == 0:
-            hour = '12am'
-        return '%s-%s-%s' % (hour, minute, second)
+def lim_str_len(string, length, end='...'):
+    """Limit a given string to a specified length"""
+    if len(string) <= length:
+        return string
+    else:
+        return '{}{}'.format(string[:length - len(end)], end)
+
+
+def deepcopy_lists(outer, inner, populate=None):
+    """Returns a list of lists with unique
+    Python IDs for each outer list, populated with desired variable
+    or callable object"""
+    hold = []
+    for i in range(outer):
+        if callable(populate):
+            hold.append([])
+            for n in range(inner):
+                hold[i].append(populate())
+        elif not callable(populate):
+            hold.append(deepcopy([populate] * inner))
+    if outer == 1:
+        hold = hold[0]
+    return hold
+
+
+def dict_flatten(*args):
+    """flattens the given dictionary into a list"""
+    hold = []
+    for a in args:
+        hold.append([i for s in a.values() for i in s])
+    return hold
 
 
 def check_binary(num, register):
-    """
-    Given a number and arduino register
-    return the correct list of arduino pins
-    :param num: number
-    :param register: arduino register B or D
-    :return:
-        List
-    """
-    dicts = {}
+    """Given a number and arduino register
+    Return all corresponding arduino pins"""
+    dicts = {'binary': 'pin_num'}
     if register == 'D':
         dicts = {1: 0, 2: 1, 4: 2, 8: 3,
                  16: 4, 32: 5, 64: 6, 128: 7}
@@ -139,207 +141,1283 @@ def check_binary(num, register):
     return store
 
 
-def deep_copy_lists(outer, inner):
-    """
-    Creates a list of lists, each with unique python IDs
-    """
-    hold = []
-    for i in range(outer):
-        hold.append(copy.deepcopy([copy.deepcopy([])] * inner))
-    return hold
-
-
-def limit_string_length(string, length):
-    """
-    Limit a given string to a specified length
-    """
-    if len(string) <= length:
-        return string
-    else:
-        return string[:length - 3] + '...'
-
-
-def list_serial_ports():
-    """
-    Finds and returns all available and open serial ports
-    :return:
-     List
-    """
-    if sys.platform.startswith('win'):
-        ports = ['COM%s' % (i + 1) for i in range(256)]
-    elif sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
-        ports = glob.glob('/dev/tty[A-Za-z]*')
-    elif sys.platform.startswith('darwin'):
-        ports = glob.glob('/dev/tty.*')
-    else:
-        raise EnvironmentError('Unsupported platform')
-    result = []
-    for port in ports:
-        try:
-            s = serial.Serial(port)
-            s.close()
-            result.append(port)
-        except (OSError, serial.SerialException):
-            pass
-    return result
-
-
-def pin_to_int(pin):
-    """
-    Returns the integer representation of
-    any given arduino pin
-    """
-    if pin < 8:
-        return int('1' + '0' * int(pin), 2)
-    if 8 <= pin <= 13:
-        return int('1' + '0' * (int(pin) - 8), 2)
-
-
-def dict_flatten(*args):
-    """
-    flattens the given dictionary into a list
-    """
-    hold = []
-    for a in args:
-        hold.append([i for s in a.values() for i in s])
-    return hold
-
-
 #################################################################
 # GUIs
-# noinspection PyAttributeOutsideInit
-class MasterGUI(object):
-    """
-    Main Program GUI. Launch everything from here
-    """
+class ScrollFrame(object):
+    """Produces a scrollable canvas item"""
+    def __init__(self, master, num_args, rows, bottom_padding=0):
+        self.root = master
+        self.rows = rows
+        self.num_args = num_args
+        self.bottom_padding = bottom_padding
+        # Top Frame
+        self.top_frame = Tk.Frame(self.root)
+        self.top_frame.grid(row=0, column=0,
+                            columnspan=self.num_args,
+                            sticky=Tk.N + Tk.S + Tk.E + Tk.W)
+        # Scroll Bar
+        v_bar = Tk.Scrollbar(self.root, orient=Tk.VERTICAL)
+        self.canvas = Tk.Canvas(self.root, yscrollcommand=v_bar.set)
+        v_bar['command'] = self.canvas.yview
+        self.canvas.bind_all('<MouseWheel>', self.on_vertical)
+        v_bar.grid(row=1, column=self.num_args, sticky=Tk.N + Tk.S)
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_rowconfigure(0, weight=1)
+        # Middle Frame
+        self.middle_frame = Tk.Frame(self.canvas)
+        # Bottom Frame
+        self.bottom_frame = Tk.Frame(self.root)
+        self.bottom_frame.grid(row=2, column=0, columnspan=self.num_args + 1)
 
-    def __init__(self, master):
-        self.single_widget_dim = 100
+    def on_vertical(self, event):
+        """returns vertical position of scrollbar"""
+        self.canvas.yview_scroll(-1 * event.delta, 'units')
+
+    def finalize(self):
+        """finishes scrollbar setup"""
+        self.canvas.create_window(0, 0, anchor=Tk.NW, window=self.middle_frame)
+        self.canvas.grid(row=1, column=0,
+                         columnspan=self.num_args, sticky=Tk.N + Tk.S + Tk.E + Tk.W)
+        self.canvas.configure(scrollregion=(0, 0, 0, self.rows * 28 + self.bottom_padding))
+
+
+class ProgressBar(object):
+    """Creates a dynamic progress bar"""
+    def __init__(self, master, canvas, bar, time_gfx, ms_total_time):
         self.master = master
-        self.master.title('Fear Control')
-        self.master.resizable(width=False, height=False)
-        self.time_label_font = tkFont.Font(family='Arial', size=8)
-        self.label_font = tkFont.Font(family='Arial', size=10)
-        self.label_font_symbol = tkFont.Font(family='Arial', size=9)
-        # noinspection PyUnresolvedReferences
-        self.balloon = Pmw.Balloon(master)
-        self.results_dir_used = {}
-        self.make_save_dir = 0
-        self.save_dir_name_used = []
-        self.ALL = Tk.N + Tk.E + Tk.S + Tk.W
-        self.ttl_time = dirs.settings.ard_last_used['packet'][3]
-        self.master.protocol('WM_DELETE_WINDOW', self.hard_exit)
-        # Threading control and devices
-        self.master_queue = Queue.Queue()
-        # some threading locks
-        self.exp_lock = threading.Event()
-        self.exp_lock.clear()
-        self.read_lock = threading.Event()
-        self.read_lock.clear()
-        # devices
-        self.ard_queue = Queue.Queue()
-        self.ard_ser = None
-        self.lj_queue = Queue.Queue()
-        self.lj_instance = None
-        self.lj_connected = False
-        self.lj_device = None
-        self.cmr_queue = Queue.Queue()
-        self.camera = None
-        self.cmr_connected = False
-        self.camera_recording = False
-        ########################################
-        # progress bar components
-        self.prog_is_running = False
+        self.canvas = canvas
+        self.segment_size = (float(ms_total_time / 1000)) / 1000
+        self.ms_total_time = ms_total_time
+        self.bar = bar
+        self.time_gfx = time_gfx
+        self.running = False
         self.start_prog = None
         self.num_prog, self.num_time = 1, 1
         self.time_diff = 0
-        #########################################
-        # Give each setup GUI its own box
+
+    def start(self):
+        """Starts the progress bar"""
+        if self.num_prog != 1:
+            self.canvas.move(self.bar, -self.num_prog + 1, 0)
+            if (-self.num_prog + 1 + 35) < 0:
+                text_move = max(-self.num_prog + 1 + 35, -929)
+                self.canvas.move(self.time_gfx, text_move, 0)
+            self.num_prog, self.num_time = 1, 1
+        self.start_prog = datetime.now()
+        self.running = True
+        self.advance()
+
+    def advance(self):
+        """Moves the progressbar one increment when necessary"""
+        now = datetime.now()
+        self.time_diff = (now - self.start_prog).seconds + float(
+            (now - self.start_prog).microseconds) / 1000000
+        if self.time_diff / self.num_time >= 0.005:
+            self.canvas.itemconfig(self.time_gfx,
+                                   text='{}'.format(format_secs(self.time_diff, True)))
+            self.num_time += 1
+        if self.time_diff / self.num_prog >= self.segment_size:
+            self.canvas.move(self.bar, 1, 0)
+            if (self.num_prog > 35) and (self.num_prog < 965):
+                self.canvas.move(self.time_gfx, 1, 0)
+            self.num_prog += 1
+        self.canvas.update()
+        time.sleep(0.010)
+        if self.num_prog > 1000 or self.time_diff > float(self.ms_total_time / 1000):
+            self.running = False
+            return self.running
+        if self.running:
+            self.master.after(10, self.advance)
+
+    def stop(self):
+        """Stops the progress bar"""
+        self.running = False
+
+
+class GUI(object):
+    """Standard TKinter GUI"""
+    def __init__(self, tcl_root, topmost=True):
+        self.root = tcl_root
+        self.root.resizable(width=False, height=False)
+        self.ALL = Tk.N + Tk.E + Tk.S + Tk.W
+        self.root.protocol('WM_DELETE_WINDOW', self.hard_exit)
+        self.hard_closed = False
+        if topmost:
+            self.root.wm_attributes("-topmost", True)
+
+    def hard_exit(self):
+        """Destroy all instances of the window
+        if close button is pressed
+        Prevents ID errors and clashes"""
+        self.hard_closed = True
+        self.root.destroy()
+        self.root.quit()
+
+    def center(self):
+        """Centers GUI window"""
+        self.root.update_idletasks()
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        [window_width, window_height] = list(
+            int(i) for i in
+            self.root.geometry().split('+')[0].split('x'))
+        x_pos = screen_width / 2 - window_width / 2
+        y_pos = screen_height / 2 - window_height / 2
+        self.root.geometry('{}x{}+{}+{}'.format(
+            window_width,
+            window_height,
+            x_pos, y_pos))
+
+    def run(self):
+        """Initiate GUI"""
+        self.center()
+        self.root.mainloop()
+
+    def platform_geometry(self, windows, darwin):
+        """Changes window dimensions based on platform"""
+        if sys.platform.startswith('win'):
+            self.root.geometry(windows)
+        elif sys.platform.startswith('darwin'):
+            self.root.geometry(darwin)
+        else:
+            pass
+
+
+class PhotometryGUI(GUI):
+    """GUI for Configuring Photometry Options
+    *Does not affect actual program function
+        - When saving file outputs, photometry config options
+          are appended to aid in Lock-In Analysis
+    Options appended: - Channels Used and associated Data column
+                      - Sample stimulation frequencies (primary and isosbestic)"""
+    def __init__(self, master):
+        GUI.__init__(self, master)
+        self.root.title('Photometry Configuration')
+        # Grab last used settings
+        self.ch_num = dirs.settings.fp_last_used['ch_num']
+        self.stim_freq = {'main': dirs.settings.fp_last_used['main_freq'],
+                          'isos': dirs.settings.fp_last_used['isos_freq']}
+        # Variables
+        self.radio_button_vars = deepcopy_lists(outer=1, inner=3,
+                                                populate=Tk.IntVar)
+        self.label_names = ['Photometry Data Channel',
+                            'Main Reference Channel',
+                            'Isosbestic Reference Channel']
+        self.main_entry = None
+        self.isos_entry = None
+        # Setup GUI
+        self.setup_radio_buttons()
+        self.setup_entry_fields()
+        Tk.Button(self.root, text='FINISH', command=self.exit).pack(side=Tk.BOTTOM)
+
+    def setup_radio_buttons(self):
+        """sets up radio buttons for LabJack channel selection"""
+        for i in range(3):
+            self.radio_button_vars[i].set(self.ch_num[i])
+        Tk.Label(self.root,
+                 text='\nPrevious Settings Loaded\n'
+                      'These settings will be saved in your .csv outputs.\n',
+                 relief=Tk.RAISED).pack(fill='both', expand='yes')
+        data_frame = Tk.LabelFrame(self.root,
+                                   text=self.label_names[0])
+        true_frame = Tk.LabelFrame(self.root,
+                                   text=self.label_names[1])
+        isos_frame = Tk.LabelFrame(self.root,
+                                   text=self.label_names[2])
+        frames = [data_frame, true_frame, isos_frame]
+        buttons = deepcopy_lists(outer=3, inner=14)
+        for frame in range(3):
+            frames[frame].pack(fill='both', expand='yes')
+            for i in range(14):
+                buttons[frame][i] = Tk.Radiobutton(frames[frame],
+                                                   text=str(i), value=i,
+                                                   variable=self.radio_button_vars[frame],
+                                                   command=lambda (button_var, index)
+                                                          =(self.radio_button_vars[frame], frame):
+                                                   self.select_button(button_var, index))
+                buttons[frame][i].pack(side=Tk.LEFT)
+
+    def setup_entry_fields(self):
+        """sets up entry fields for frequency entries"""
+        freq_frame = Tk.LabelFrame(self.root,
+                                   text='Primary and Isosbestic '
+                                        'Stimulation Frequencies')
+        freq_frame.pack(fill='both', expand='yes')
+        Tk.Label(freq_frame, text='Main Frequency: ').pack(side=Tk.LEFT)
+        self.main_entry = Tk.Entry(freq_frame)
+        self.main_entry.pack(side=Tk.LEFT)
+        self.isos_entry = Tk.Entry(freq_frame)
+        self.isos_entry.pack(side=Tk.RIGHT)
+        Tk.Label(freq_frame, text='Isosbestic Frequency: ').pack(side=Tk.RIGHT)
+        self.main_entry.insert(Tk.END, '{}'.format(str(self.stim_freq['main'])))
+        self.isos_entry.insert(Tk.END, '{}'.format(str(self.stim_freq['isos'])))
+
+    def select_button(self, var, ind):
+        """Changes button variables when user selects an option"""
+        if var.get() not in self.ch_num:
+            self.ch_num[ind] = var.get()
+        else:
+            temp_report = self.label_names[self.ch_num.index(var.get())]
+            tkMb.showinfo('Error!',
+                          'You already selected \n['
+                          'Channel {}] \n'
+                          'for \n'
+                          '[{}]!'.format(var.get(), temp_report),
+                          parent=self.root)
+            self.radio_button_vars[ind].set(self.ch_num[ind])
+
+    def exit(self):
+        """Quit Photometry"""
+        try:
+            true_freq = int(self.main_entry.get().strip())
+            isos_freq = int(self.isos_entry.get().strip())
+            if true_freq == 0 or isos_freq == 0:
+                tkMb.showinfo('Error!', 'Stimulation Frequencies '
+                                        'must be higher than 0 Hz!',
+                              parent=self.root)
+            elif true_freq == isos_freq:
+                tkMb.showinfo('Error!', 'Main sample and Isosbestic Frequencies '
+                                        'should not be the same value.',
+                              parent=self.root)
+            else:
+                self.stim_freq = {'main': true_freq,
+                                  'isos': isos_freq}
+                to_save = {'ch_num': self.ch_num,
+                           'main_freq': self.stim_freq['main'],
+                           'isos_freq': self.stim_freq['isos']}
+                dirs.threadsafe_edit(recipient='fp_last_used', donor=to_save)
+                self.root.destroy()
+                self.root.quit()
+        except ValueError:
+            tkMb.showinfo('Error!', 'Stimulation frequencies must be '
+                                    'Integers in Hz.',
+                          parent=self.root)
+
+
+class LabJackGUI(GUI):
+    """GUI for LabJack configuration"""
+    def __init__(self, master):
+        GUI.__init__(self, master)
+        self.root.title('LabJack Configuration')
+        self.lj_save_name = ''
+        # Grab last used LJ settings
+        self.ch_num = dirs.settings.lj_last_used['ch_num']
+        self.scan_freq = dirs.settings.lj_last_used['scan_freq']
+        self.n_ch = len(self.ch_num)
+        # Variables
+        self.preset_list = []
+        self.preset_chosen = Tk.StringVar()
+        self.preset_menu = None
+        self.new_save_entry = None
+        self.button_vars = deepcopy_lists(outer=1, inner=14,
+                                          populate=Tk.IntVar)
+        self.scan_entry = None
+        # Setup GUI
+        self.preset_gui()
+        self.manual_config_gui()
+        Tk.Button(self.root,
+                  text='FINISH',
+                  command=self.exit).grid(row=1, column=0, columnspan=2)
+
+    def update_preset_list(self):
+        """Updates self.preset_list with all available presets"""
+        self.preset_list = [i for i in dirs.settings.lj_presets]
+
+    def preset_gui(self):
+        """Loads all presets into a menu for selection"""
+        self.update_preset_list()
+        # Create frame
+        right_frame = Tk.LabelFrame(self.root, text='Preset Configuration')
+        right_frame.grid(row=0, column=1)
+        # Load Presets
+        Tk.Label(right_frame, text='\nChoose a Preset'
+                                   '\nOr Save a '
+                                   'New Preset:').pack(fill='both',
+                                                       expand='yes')
+        # existing presets
+        preset_frame = Tk.LabelFrame(right_frame, text='Select a Saved Preset')
+        preset_frame.pack(fill='both', expand='yes')
+        self.preset_chosen.set(max(self.preset_list, key=len))
+        self.preset_menu = Tk.OptionMenu(preset_frame, self.preset_chosen,
+                                         *self.preset_list,
+                                         command=self.preset_list_choose)
+        self.preset_menu.pack(side=Tk.TOP)
+        # Save New Presets
+        new_preset_frame = Tk.LabelFrame(right_frame, text='(Optional): '
+                                                           'Save New Preset')
+        new_preset_frame.pack(fill='both', expand='yes')
+        self.new_save_entry = Tk.Entry(new_preset_frame)
+        self.new_save_entry.pack()
+        Tk.Button(new_preset_frame, text='SAVE',
+                  command=self.preset_save).pack()
+
+    def preset_list_choose(self, name):
+        """Configures settings based on preset chosen"""
+        self.preset_chosen.set(name)
+        self.ch_num = dirs.settings.lj_presets[name]['ch_num']
+        self.scan_freq = dirs.settings.lj_presets[name]['scan_freq']
+        self.n_ch = len(self.ch_num)
+        # Clear settings and set to preset config
+        for i in range(14):
+            self.button_vars[i].set(0)
+        for i in self.ch_num:
+            self.button_vars[i].set(1)
+        self.scan_entry.delete(0, Tk.END)
+        self.scan_entry.insert(Tk.END, self.scan_freq)
+
+    def preset_save(self):
+        """Saves settings to new preset if settings are valid"""
+        self.update_preset_list()
+        validity = self.check_input_validity()
+        if validity:
+            save_name = self.new_save_entry.get().strip().lower()
+            if len(save_name) == 0:
+                tkMb.showinfo('Error!',
+                              'You must give your Preset a name.',
+                              parent=self.root)
+            elif len(save_name) != 0:
+                if save_name not in dirs.settings.lj_presets:
+                    to_save = {'ch_num': self.ch_num, 'scan_freq': self.scan_freq}
+                    dirs.threadsafe_edit(recipient='lj_presets', name=save_name,
+                                         donor=to_save)
+                    tkMb.showinfo('Saved!', 'Preset saved as '
+                                            '[{}]'.format(save_name),
+                                  parent=self.root)
+                    menu = self.preset_menu.children['menu']
+                    menu.add_command(label=save_name,
+                                     command=lambda:
+                                     self.preset_list_choose(save_name))
+                    self.preset_chosen.set(save_name)
+                elif save_name in dirs.settings.lj_presets:
+                    if tkMb.askyesno('Overwrite?',
+                                     '[{}] already exists.\n'
+                                     'Overwrite this preset?'.format(save_name),
+                                     parent=self.root):
+                        to_save = {'ch_num': self.ch_num, 'scan_freq': self.scan_freq}
+                        dirs.threadsafe_edit(recipient='lj_presets', name=save_name,
+                                             donor=to_save)
+                        tkMb.showinfo('Saved!', 'Preset saved as '
+                                                '[{}]'.format(save_name),
+                                      parent=self.root)
+
+    def manual_config_gui(self):
+        """Manually configure LabJack settings"""
+        left_frame = Tk.LabelFrame(self.root, text='Manual Configuration')
+        left_frame.grid(row=0, column=0)
+        Tk.Label(left_frame, text='\nMost Recently '
+                                  'Used Settings:').pack(fill='both',
+                                                         expand='yes')
+        # Configure channels
+        ch_frame = Tk.LabelFrame(left_frame, text='Channels Selected')
+        ch_frame.pack(fill='both', expand='yes')
+        # Create Check Buttons
+        buttons = deepcopy_lists(outer=1, inner=14)
+        for i in range(14):
+            buttons[i] = Tk.Checkbutton(ch_frame, text='{:0>2}'.format(i),
+                                        variable=self.button_vars[i],
+                                        onvalue=1, offvalue=0,
+                                        command=self.select_channel)
+        for i in range(14):
+            buttons[i].grid(row=i // 5, column=i - (i // 5) * 5)
+        for i in self.ch_num:
+            buttons[i].select()
+        # Configure sampling frequency
+        scan_frame = Tk.LabelFrame(left_frame, text='Scan Frequency')
+        scan_frame.pack(fill='both', expand='yes')
+        Tk.Label(scan_frame, text='Freq/Channel (Hz):').pack(side=Tk.LEFT)
+        self.scan_entry = Tk.Entry(scan_frame, width=8)
+        self.scan_entry.pack(side=Tk.LEFT)
+        self.scan_entry.insert(Tk.END, self.scan_freq)
+
+    def select_channel(self):
+        """Configures check buttons for LJ channels based
+        on user selection"""
+        redo = False
+        temp_ch_num = deepcopy(self.ch_num)
+        self.ch_num = []
+        for i in range(14):
+            if self.button_vars[i].get() == 1:
+                self.ch_num.append(i)
+        self.n_ch = len(self.ch_num)
+        if self.n_ch > 8:
+            tkMb.showinfo('Error!',
+                          'You cannot use more than 8 LabJack '
+                          'Channels at once.',
+                          parent=self.root)
+            redo = True
+        elif self.n_ch == 0:
+            tkMb.showinfo('Error!',
+                          'You must configure at least one '
+                          'Channel.',
+                          parent=self.root)
+            redo = True
+        if redo:
+            self.ch_num = temp_ch_num
+            for i in range(14):
+                self.button_vars[i].set(0)
+            for i in self.ch_num:
+                self.button_vars[i].set(1)
+            self.n_ch = len(self.ch_num)
+
+    def check_input_validity(self):
+        """Checks if user inputs are valid;
+        if valid, saves to settings object"""
+        validity = False
+        button_state = []
+        for i in self.button_vars:
+            button_state.append(i.get())
+        if 1 not in button_state:
+            tkMb.showinfo('Error!',
+                          'You must pick at least one LabJack '
+                          'Channel to Record from.',
+                          parent=self.root)
+        else:
+            try:
+                self.scan_freq = int(self.scan_entry.get().strip())
+                max_freq = int(50000 / self.n_ch)
+                if self.scan_freq == 0:
+                    tkMb.showinfo('Error!',
+                                  'Scan Frequency must be higher than 0 Hz.',
+                                  parent=self.root)
+                elif self.scan_freq > max_freq:
+                    tkMb.showinfo('Error!',
+                                  'SCAN FREQUENCY x NUMBER OF CHANNELS \n'
+                                  'must be lower than [50,000Hz]\n\n'
+                                  'Max [{} Hz] right now with [{}] Channels '
+                                  'in use.'.format(max_freq, self.n_ch),
+                                  parent=self.root)
+                else:
+                    validity = True
+                    to_save = {'ch_num': self.ch_num, 'scan_freq': self.scan_freq}
+                    dirs.threadsafe_edit(recipient='lj_last_used', donor=to_save)
+            except ValueError:
+                tkMb.showinfo('Error!', 'Scan Frequency must be an '
+                                        'Integer in Hz.',
+                              parent=self.root)
+        return validity
+
+    def exit(self):
+        """Validates inputs and closes GUI"""
+        validity = self.check_input_validity()
+        if validity:
+            self.root.destroy()
+            self.root.quit()
+
+
+class ArduinoGUI(GUI):
+    """Arduino settings config. Settings are saved to
+    dirs.settings object, which is pulled by the arduino at
+    experiment start"""
+    def __init__(self, master):
+        GUI.__init__(self, master)
+        self.types = ''
+        self.num_entries = 0
+        # Variables
+        self.output_ids, self.pwm_ids = (range(2, 8), range(8, 14))
+        self.pwm_ids.remove(10)
+        self.pin_button_vars = None
+        self.entries = None
+        self.closebutton = None
+        # Default entry validating does not end in closing the GUI
+        self.close_gui = False
+        # Pull last used settings
+        [self.packet, self.tone_pack,
+         self.out_pack, self.pwm_pack] = dirs.settings.quick_ard()
+        self.max_time = 0
+        self.data = {'starts': {}, 'middles': {}, 'ends': {}, 'hold': {}}
+        self.return_data = []
+        self.fields_validated = {}
+
+    def tone_setup(self):
+        """Tone GUI"""
+        self.root.title('Tone Configuration')
+        self.types = 'tone'
+        num_pins, self.num_entries = 1, 15
+        scroll_frame = ScrollFrame(self.root, num_args=num_pins,
+                                   rows=self.num_entries + 1)
+        # Setup Toggle Buttons
+        self.pin_button_vars = Tk.IntVar()
+        self.pin_button_vars.set(0)
+        pin_button = Tk.Checkbutton(scroll_frame.top_frame,
+                                    text='Enable Tone\n'
+                                         '(Arduino Pin 10)',
+                                    variable=self.pin_button_vars,
+                                    onvalue=1, offvalue=0,
+                                    command=lambda: self.button_toggle('tone'))
+        pin_button.pack()
+        # Setup Entries
+        self.entries = [None] * self.num_entries
+        Tk.Label(scroll_frame.middle_frame,
+                 text='Time On(s), '
+                      'Time until Off(s), '
+                      'Freq (Hz)').grid(row=0, column=1, sticky=self.ALL)
+        for row in range(self.num_entries):
+            Tk.Label(scroll_frame.middle_frame,
+                     text='{:0>2}'.format(row + 1)).grid(row=row + 1, column=0)
+            validate = (scroll_frame.middle_frame.register(self.entry_validate),
+                        False, row)
+            self.entries[row] = Tk.Entry(scroll_frame.middle_frame,
+                                         validate='focusout',
+                                         validatecommand=validate)
+            self.entries[row].grid(row=row + 1, column=1, sticky=self.ALL)
+            self.entries[row].config(state=Tk.DISABLED)
+        # Confirm button
+        self.closebutton = Tk.Button(scroll_frame.bottom_frame,
+                                     text='CONFIRM',
+                                     command=self.pre_close)
+        self.closebutton.pack(side=Tk.TOP)
+        scroll_frame.finalize()
+        # Finish setup
+        self.platform_geometry(windows='250x325', darwin='257x272')
+
+    def pwm_setup(self):
+        """PWM Config"""
+        self.root.title('PWM Configuration')
+        self.types = 'pwm'
+        num_pins, self.num_entries = 5, 15
+        scroll_frame = ScrollFrame(self.root, num_pins,
+                                   self.num_entries + 1, bottom_padding=24)
+        # Usage instructions
+        info_frame = Tk.LabelFrame(scroll_frame.top_frame,
+                                   text='Enable Arduino Pins')
+        info_frame.grid(row=0, column=0, sticky=self.ALL)
+        Tk.Label(info_frame, text=' ' * 2).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame, text='e.g. 0,180,200,20,90  (Per Field)',
+                 relief=Tk.RAISED).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame, text=' ' * 2).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame,
+                 text='Enable pins, then input instructions '
+                      'with comma separation.',
+                 relief=Tk.RAISED).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame,
+                 text=' ' * 5).pack(side=Tk.RIGHT)
+        # Variables
+        self.entries = deepcopy_lists(outer=num_pins, inner=self.num_entries)
+        self.pin_button_vars = deepcopy_lists(outer=1, inner=num_pins,
+                                              populate=Tk.IntVar)
+        pin_buttons = [None] * num_pins
+        # Setup items
+        for pin in range(num_pins):
+            pin_buttons[pin] = Tk.Checkbutton(info_frame,
+                                              text='Pin {:0>2}'.format(self.pwm_ids[pin]),
+                                              variable=self.pin_button_vars[pin],
+                                              onvalue=1, offvalue=0,
+                                              command=lambda tags=self.pwm_ids[pin]:
+                                              self.button_toggle(tags))
+            pin_buttons[pin].pack(side=Tk.LEFT)
+            Tk.Label(scroll_frame.middle_frame,
+                     text='Pin {:0>2}\n'
+                          'Time On(s), '
+                          'Time until Off(s), \n'
+                          'Freq (Hz), '
+                          'Duty Cycle (%),\n'
+                          'Phase Shift '.format(self.pwm_ids[pin]) + '(' + u'\u00b0' + ')').grid(row=0, column=1 + pin)
+            for row in range(self.num_entries):
+                validate = (scroll_frame.middle_frame.register(self.entry_validate),
+                            pin, row)
+                Tk.Label(scroll_frame.middle_frame,
+                         text='{:0>2}'.format(row + 1)).grid(row=row + 1, column=0)
+                self.entries[pin][row] = Tk.Entry(scroll_frame.middle_frame, width=25,
+                                                  validate='focusout',
+                                                  validatecommand=validate)
+                self.entries[pin][row].grid(
+                    row=row + 1, column=1 + pin)
+                self.entries[pin][row].config(state='disabled')
+        # Confirm Button
+        self.closebutton = Tk.Button(scroll_frame.bottom_frame,
+                                     text='CONFIRM',
+                                     command=self.pre_close)
+        self.closebutton.pack(side=Tk.TOP)
+        scroll_frame.finalize()
+        # Finish Setup
+        self.platform_geometry(windows='855x350', darwin='1100x280')
+
+    def output_setup(self):
+        """Output GUI"""
+        self.root.title('Simple Output Configuration')
+        self.types = 'output'
+        num_pins, self.num_entries = 6, 15
+        scroll_frame = ScrollFrame(self.root, num_pins, self.num_entries + 1,
+                                   bottom_padding=8)
+        # Usage instructions
+        info_frame = Tk.LabelFrame(scroll_frame.top_frame,
+                                   text='Enable Arduino Pins')
+        info_frame.grid(row=0, column=0, sticky=self.ALL)
+        Tk.Label(info_frame, text=' ' * 21).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame, text='Enable pins, then input instructions '
+                                  'line by line with comma '
+                                  'separation.',
+                 relief=Tk.RAISED).pack(side=Tk.RIGHT)
+        Tk.Label(info_frame, text=' ' * 21).pack(side=Tk.RIGHT)
+        # Variables
+        self.entries = deepcopy_lists(outer=num_pins, inner=self.num_entries)
+        self.pin_button_vars = deepcopy_lists(outer=1, inner=num_pins,
+                                              populate=Tk.IntVar)
+        pin_buttons = [None] * num_pins
+        # Setup items
+        for pin in range(num_pins):
+            pin_buttons[pin] = Tk.Checkbutton(info_frame,
+                                              text='PIN {:0>2}'.format(
+                                                  self.output_ids[pin]),
+                                              variable=self.pin_button_vars[pin],
+                                              onvalue=1, offvalue=0,
+                                              command=lambda tags=self.output_ids[pin]:
+                                              self.button_toggle(tags))
+            pin_buttons[pin].pack(side=Tk.LEFT)
+            Tk.Label(scroll_frame.middle_frame,
+                     text='Pin {:0>2}\n'
+                          'Time On(s), '
+                          'Time until Off(s)'.format(self.output_ids[pin])).grid(row=0,
+                                                                                 column=1 + pin)
+            for row in range(self.num_entries):
+                validate = (scroll_frame.middle_frame.register(self.entry_validate),
+                            pin, row)
+                Tk.Label(scroll_frame.middle_frame,
+                         text='{:0>2}'.format(row + 1)).grid(row=row + 1, column=0)
+                self.entries[pin][row] = Tk.Entry(scroll_frame.middle_frame, width=18,
+                                                  validate='focusout',
+                                                  validatecommand=validate)
+                self.entries[pin][row].grid(row=row + 1, column=1 + pin)
+                self.entries[pin][row].config(state=Tk.DISABLED)
+        # Confirm Button
+        self.closebutton = Tk.Button(scroll_frame.bottom_frame,
+                                     text='CONFIRM',
+                                     command=self.pre_close)
+        self.closebutton.pack(side=Tk.TOP)
+        scroll_frame.finalize()
+        # Finish Setup
+        self.center()
+        self.platform_geometry(windows='983x350', darwin='1110x272')
+
+    def button_toggle(self, tags):
+        """Toggles the selected pin button"""
+        if tags == 'tone':
+            if self.pin_button_vars.get() == 0:
+                for row in range(self.num_entries):
+                    self.entries[row].configure(state=Tk.DISABLED)
+            elif self.pin_button_vars.get() == 1:
+                for row in range(self.num_entries):
+                    self.entries[row].configure(state=Tk.NORMAL)
+        else:
+            var, ind = None, None
+            if tags in self.output_ids:
+                ind = self.output_ids.index(tags)
+                var = self.pin_button_vars[ind]
+            elif tags in self.pwm_ids:
+                ind = self.pwm_ids.index(tags)
+                var = self.pin_button_vars[ind]
+            if var.get() == 0:
+                for entry in range(self.num_entries):
+                    self.entries[ind][entry].configure(state=Tk.DISABLED)
+            elif var.get() == 1:
+                for entry in range(self.num_entries):
+                    self.entries[ind][entry].configure(state=Tk.NORMAL)
+
+    # noinspection PyTypeChecker
+    def entry_validate(self, pins=False, rows=None):
+        """Checks inputs are valid"""
+        entry, err_place_msg, arg_types = None, '', []
+        row = int(rows)
+        pin = None
+        if pins:
+            pin = int(pins)
+        # If we request a close via confirm button, we do a final check
+        close_gui = self.close_gui
+        if self.close_gui:
+            # set to False so if check fails we don't get stuck in a loop
+            self.close_gui = False
+        pin_ids = 0
+        ####################################################################
+        if self.types == 'tone':
+            pin_ids = 10
+            entry = self.entries[row]
+            arg_types = ['Time On (s)', 'Time until Off (s)', 'Frequency (Hz)']
+            err_place_msg = 'row [{:0>2}]'.format(row + 1)
+        elif self.types == 'output':
+            pin_ids = self.output_ids[pin]
+            entry = self.entries[pin][row]
+            arg_types = ['Time On (s)', 'Time until Off (s)']
+            err_place_msg = 'row [{:0>2}], pin [{:0>2}]'.format(row + 1, pin_ids)
+        elif self.types == 'pwm':
+            pin_ids = self.pwm_ids[pin]
+            entry = self.entries[pin][row]
+            arg_types = ['Time On (s)', 'Time until Off (s)', 'Frequency (Hz)',
+                         'Duty Cycle (%)', 'Phase Shift (deg)']
+            err_place_msg = 'row [{:0>2}], pin [{:0>2}]'.format(row + 1, pin_ids)
+        ####################################################################
+        # Grab comma separated user inputs as a list
+        inputs = entry.get().strip().split(',')
+        for i in range(len(inputs)):
+            inputs[i] = inputs[i].strip()
+        # Now we begin to check entry validity
+        # 1. Check Commas don't occur at ends or there exist any double commas:
+        while True:
+            time.sleep(0.0001)
+            if '' in inputs:
+                inputs.pop(inputs.index(''))
+            else:
+                break
+        # 2. Check we have correct number of input arguments
+        num_args = len(arg_types)
+        error_str = ''
+        for i in range(num_args):
+            if i == 3:
+                error_str += '\n'
+            error_str += str(arg_types[i])
+            if i < num_args - 1:
+                error_str += ', '
+        # 2a. More than 0 but not num_args
+        if len(inputs) != num_args and len(inputs) > 0:
+            tkMb.showinfo('Error!',
+                          'Error in {}:\n'
+                          'Setup requires [{}] arguments for each entry.\n\n'
+                          'Comma separated in this order:\n\n'
+                          '[{}]'.format(err_place_msg, num_args, error_str),
+                          parent=self.root)
+            entry.focus()
+            return False
+        # 2b. Exactly 0: we don't need to process an empty field
+        if len(inputs) == 0:
+            if close_gui:
+                self.close()
+            return False
+        # 3. Check input content are valid
+        try:
+            on, off = int(inputs[0]), int(inputs[1])
+            on_ms, off_ms = on * 1000, off * 1000
+            refr, freq, phase, duty_cycle = None, 0, 0, 0
+            if self.types == 'tone':
+                freq = int(inputs[2])
+                refr = freq
+            elif self.types == 'output':
+                refr = pin_ids
+            elif self.types == 'pwm':
+                freq = int(inputs[2])
+                duty_cycle = int(inputs[3])
+                phase = int(inputs[4])
+                refr = long('{:0>5}{:0>5}{:0>5}'.format(freq, duty_cycle, phase))
+            # 3a. Store max time configured; at close, if max_time > dirs.settings max time,
+            #     we change the max time for procedure
+            if (on_ms + off_ms) > self.max_time and off_ms != 0:
+                self.max_time = on_ms + off_ms
+            # 3b. Time interval for each entry must be > 0
+            if off == 0:
+                tkMb.showinfo('Error!',
+                              'Error in {}:\n\n'
+                              'Time Interval (i.e. '
+                              'Time until Off) '
+                              'cannot be 0s!'.format(err_place_msg),
+                              parent=self.root)
+                entry.focus()
+                return False
+            # 3c. Type specific checks
+            if self.types == 'tone':
+                if freq < 50:
+                    tkMb.showinfo('Error!',
+                                  'Error in {}:\n\n'
+                                  'The TONE function works '
+                                  'best for high frequencies.\n\n'
+                                  'Use the PWM function '
+                                  'instead for low Hz '
+                                  'frequency modulation'.format(err_place_msg),
+                                  parent=self.root)
+                    entry.focus()
+                    return False
+            if self.types == 'pwm':
+                if phase not in range(361):
+                    tkMb.showinfo('Error!',
+                                  'Error in {}:\n\n'
+                                  'Phase Shift must be an integer\n'
+                                  'between 0 and 360 degrees.'.format(err_place_msg),
+                                  parent=self.root)
+                    entry.focus()
+                    return False
+                if duty_cycle not in range(1, 100):
+                    tkMb.showinfo('Error!',
+                                  'Error in {}:\n\n'
+                                  'Duty Cycle must '
+                                  'be an integer '
+                                  'percentage between '
+                                  '1 and 99 inclusive.'.format(err_place_msg),
+                                  parent=self.root)
+                    entry.focus()
+                    return False
+                if freq > 100:
+                    tkMb.showinfo('Error!',
+                                  'Error in {}:\n\n'
+                                  'The PWM function works best'
+                                  'for frequencies <= 100 Hz.\n\n'
+                                  'Use the TONE function or an'
+                                  'external wave '
+                                  'generator instead.'.format(err_place_msg),
+                                  parent=self.root)
+                    entry.focus()
+                    return False
+        except ValueError:
+            tkMb.showinfo('Error!',
+                          'Error in {}:\n\n'
+                          'Input arguments '
+                          'must be comma '
+                          'separated integers'.format(err_place_msg),
+                          parent=self.root)
+            entry.focus()
+            return False
+        # 4. Check if any time intervals overlap
+        #       Rules:
+        #       - Time intervals cannot overlap for the same pin
+        #       - Time intervals next to each other
+        #         at the same [refr] will be joined into a single segment
+        #         to save space on arduino
+        #       Therefore:
+        #       - OUTPUT Pins can always overlap. We just need to combine the time inputs
+        #       - PWM Pins can overlap iff same [refr]; else raise error
+        #       - Tone is one pin only. Only overlap if same [freq]
+        #       (to date only implemented joining adjacent segments; no overlap
+        #        managing available)
+        ################################################################################
+        # ...because pwm is a special butterfly and needs extra steps:
+        starts_l, middles_l, ends_l, hold_l = {}, {}, {}, {}
+        if self.types == 'pwm':
+            pin_int = self.pin_to_int(pin_ids)
+            # temporarily hold in starts_l so we can use self.data in the same way
+            # for pwm and output/tone in the following
+            (starts_l, middles_l, ends_l, hold_l) = (self.data['starts'],
+                                                     self.data['middles'],
+                                                     self.data['ends'],
+                                                     self.data['hold'])
+            try:
+                starts_l[pin_ids], middles_l[pin_ids], ends_l[pin_ids], hold_l[pin_int]
+            except KeyError:
+                (starts_l[pin_ids], middles_l[pin_ids],
+                 ends_l[pin_ids], hold_l[pin_int]) = {}, {}, {}, {}
+            (self.data['starts'], self.data['middles'],
+             self.data['ends'], self.data['hold']) = (starts_l[pin_ids], middles_l[pin_ids],
+                                                      ends_l[pin_ids], hold_l[pin_int])
+        # 4a.
+        # Before we validate entries further:
+        # If the validation is performed on a field that already had data validated
+        # e.g. because user misclicked or needs to edit
+        # we will need to remove its previous set of data first to prevent clashing
+        self.time_remove(rows, pins, refr)
+        # 4b. test for time overlaps
+        starts_all, ends_all, middles_all = [], [], []
+        try:
+            self.data['starts'][refr], self.data['middles'][refr], self.data['ends'][refr]
+        except KeyError:
+            self.data['starts'][refr], self.data['middles'][refr], self.data['ends'][refr] = [], [], []
+        if self.types in ['tone', 'pwm']:
+            try:
+                self.data['hold'][refr]
+            except KeyError:
+                self.data['hold'][refr] = []
+            (starts_all, middles_all, ends_all) = dict_flatten(self.data['starts'],
+                                                               self.data['middles'],
+                                                               self.data['ends'])
+        elif self.types == 'output':
+            (starts_all, middles_all, ends_all) = (self.data['starts'][pin_ids],
+                                                   self.data['middles'][pin_ids],
+                                                   self.data['ends'][pin_ids])
+        if on in starts_all or on + off in ends_all or on in middles_all or on + off in middles_all:
+            tkMb.showinfo('Error!', 'Error in {}:\n\n'
+                                    'Time intervals '
+                                    'should not overlap for the same '
+                                    'pin!'.format(err_place_msg),
+                          parent=self.root)
+            entry.focus()
+            return False
+        # 4c. We've finished checking for validity.
+        #     If the input reached this far, it's ready to be added
+        self.data['middles'][refr] += range(on + 1, on + off)
+        front, back = 0, 0
+        self.time_combine(on_ms, off_ms, front, back, refr)
+        if on in self.data['ends'][refr] and on + off not in self.data['starts'][refr]:
+            front, back = 1, 0
+            self.data['middles'][refr].append(on)
+            self.data['ends'][refr].remove(on)
+            self.data['ends'][refr].append(on + off)
+            self.time_combine(on_ms, off_ms, front, back, refr)
+        elif on not in self.data['ends'][refr] and on + off in self.data['starts'][refr]:
+            front, back = 0, 1
+            self.data['middles'][refr].append(on + off)
+            self.data['starts'][refr].remove(on + off)
+            self.data['starts'][refr].append(on)
+            self.time_combine(on_ms, off_ms, front, back, refr)
+        elif on in self.data['ends'][refr] and on + off in self.data['starts'][refr]:
+            front, back = 1, 1
+            self.data['middles'][refr].append(on)
+            self.data['middles'][refr].append(on + off)
+            self.data['starts'][refr].remove(on + off)
+            self.data['ends'][refr].remove(on)
+            self.time_combine(on_ms, off_ms, front, back, refr)
+        else:
+            self.data['starts'][refr].append(on)
+            self.data['ends'][refr].append(on + off)
+        # Now we need to make sure this one comes out as an already validated field
+        if self.types == 'tone':
+            self.fields_validated[rows] = {'starts': on,
+                                           'middles': range(on + 1, on + off),
+                                           'ends': on + off,
+                                           'hold': [on_ms, on_ms + off_ms],
+                                           'refr': refr}
+        elif self.types == 'output':
+            pin_int = self.pin_to_int(refr)
+            self.fields_validated[rows + pins] = {'starts': on,
+                                                  'middles': range(on + 1, on + off),
+                                                  'ends': on + off,
+                                                  'hold': {on_ms: pin_int, off_ms: pin_int},
+                                                  'refr': refr}
+        elif self.types == 'pwm':
+            self.fields_validated[rows + pins] = {'starts': on,
+                                                  'middles': range(on + 1, on + off),
+                                                  'ends': on + off,
+                                                  'hold': [on_ms, on_ms + off_ms],
+                                                  'refr': refr}
+        # again, pwm requires some extra work before we finish...
+        if self.types == 'pwm':
+            (self.data['starts'],
+             self.data['middles'],
+             self.data['ends'],
+             self.data['hold']) = (starts_l, middles_l, ends_l, hold_l)
+        # If all is well and we requested a close, we close the GUI
+        if close_gui:
+            self.close()
+        else:
+            return True
+
+    @staticmethod
+    def pin_to_int(pin):
+        """Returns the integer representation of
+        any given arduino pin"""
+        if pin < 8:
+            return int('1' + '0' * int(pin), 2)
+        if 8 <= pin <= 13:
+            return int('1' + '0' * (int(pin) - 8), 2)
+
+    # noinspection PyStatementEffect,PyUnresolvedReferences,PyTypeChecker
+    def time_remove(self, rows, pins, refr):
+        """Removes the indicated time segment"""
+        field = {}
+        if self.types == 'tone':
+            try:
+                self.fields_validated[rows]
+            except KeyError:
+                self.fields_validated[rows] = {'starts': -1, 'middles': [],
+                                               'ends': -1, 'hold': [], 'refr': refr}
+                return
+            field = self.fields_validated[rows]
+        elif self.types in ['output', 'pwm']:
+            try:
+                self.fields_validated[rows + pins]
+            except KeyError:
+                self.fields_validated[rows + pins] = {'starts': -1, 'middles': [],
+                                                      'ends': -1, 'hold': [], 'refr': refr}
+                return
+            field = self.fields_validated[rows + pins]
+        field_refr = field['refr']
+        if self.types in ['tone', 'pwm']:
+            try:
+                # Check that the data exists at refr
+                self.data['starts'][field_refr], self.data['middles'][field_refr]
+                self.data['ends'][field_refr], self.data['hold'][field_refr]
+                # Remove Middles
+                for i in field['middles']:
+                    if i in self.data['middles'][field_refr]:
+                        self.data['middles'][field_refr].remove(i)
+                # Remove starts, ends, holds
+                if field['starts'] in self.data['starts'][field_refr]:
+                    self.data['starts'][field_refr].remove(field['starts'])
+                    self.data['hold'][field_refr].remove(field['starts'] * 1000)
+                elif field['starts'] in self.data['middles'][field_refr]:
+                    self.data['middles'][field_refr].remove(field['starts'])
+                    self.data['ends'][field_refr].append(field['starts'])
+                    self.data['hold'][field_refr].append(field['starts'] * 1000)
+                if field['ends'] in self.data['ends'][field_refr]:
+                    self.data['ends'][field_refr].remove(field['ends'])
+                    self.data['hold'][field_refr].remove(field['ends'] * 1000)
+                elif field['ends'] in self.data['middles'][field_refr]:
+                    self.data['middles'][field_refr].remove(field['ends'])
+                    self.data['starts'][field_refr].append(field['ends'])
+                    self.data['hold'][field_refr].append(field['ends'] * 1000)
+                # Set field to empty; we'll have to add back into it in the validate function
+                if self.types == 'tone':
+                    self.fields_validated[rows] = {'starts': -1, 'middles': [],
+                                                   'ends': -1, 'hold': [], 'refr': refr}
+                elif self.types == 'pwm':
+                    self.fields_validated[rows + pins] = {'starts': -1, 'middles': [],
+                                                          'ends': -1, 'hold': [], 'refr': refr}
+            except KeyError:
+                pass
+        elif self.types == 'output':
+            pin_int = pin_to_int(refr)
+            try:
+                self.data['starts'][field_refr], self.data['middles'][field_refr]
+                self.data['ends'][field_refr]
+                self.data['hold'][field['starts'] * 1000], self.data['hold'][field['ends'] * 1000]
+                # rm middles
+                for i in field['middles']:
+                    if i in self.data['middles'][field_refr]:
+                        self.data['middles'][field_refr].remove(i)
+                # rm s, e, h
+                if field['starts'] in self.data['starts'][field_refr]:
+                    self.data['starts'][field_refr].remove(field['starts'])
+                    if self.data['hold'][field['starts'] * 1000] == pin_int:
+                        self.data['hold'] = {key: self.data['hold'][key]
+                                             for key in self.data['hold']
+                                             if key != field['starts'] * 1000}
+                    else:
+                        self.data['hold'][field['starts'] * 1000] -= pin_int
+                elif field['starts'] in self.data['middles'][field_refr]:
+                    self.data['middles'][field_refr].remove(field['starts'])
+                    self.data['ends'][field_refr].append(field['starts'])
+                    if field['starts'] * 1000 in self.data['hold']:
+                        self.data['hold'][field['starts'] * 1000] += pin_int
+                    else:
+                        self.data['hold'][field['starts'] * 1000] = pin_int
+                if field['ends'] in self.data['ends'][field_refr]:
+                    self.data['ends'][field_refr].remove(field['ends'])
+                    if self.data['hold'][field['ends'] * 1000] == pin_int:
+                        self.data['hold'] = {key: self.data['hold'][key]
+                                             for key in self.data['hold']
+                                             if key != field['ends'] * 1000}
+                    else:
+                        self.data['hold'][field['ends'] * 1000] -= pin_int
+                elif field['ends'] in self.data['middles'][field_refr]:
+                    self.data['middles'][field_refr].remove(field['ends'])
+                    self.data['starts'][field_refr].append(field['ends'])
+                    if field['ends'] * 1000 in self.data['hold']:
+                        self.data['hold'][field['ends'] * 1000] += pin_int
+                    else:
+                        self.data['hold'][field['ends'] * 1000] = pin_int
+                # set field to empty
+                self.fields_validated[rows + pins] = {'starts': -1, 'middles': [],
+                                                      'ends': -1, 'hold': [], 'refr': refr}
+            except KeyError:
+                pass
+
+    # noinspection PyUnresolvedReferences
+    def time_combine(self, on_ms, off_ms, front, back, refr):
+        """Looks for adjacent time intervals and joins
+        them into a single instruction"""
+        if self.types in ['pwm', 'tone']:
+            if front == 0 and back == 0:
+                self.data['hold'][refr].append(on_ms)
+                self.data['hold'][refr].append(on_ms + off_ms)
+            if front == 1:
+                self.data['hold'][refr].remove(on_ms)
+                self.data['hold'][refr].remove(on_ms)
+            if back == 1:
+                self.data['hold'][refr].remove(on_ms + off_ms)
+                self.data['hold'][refr].remove(on_ms + off_ms)
+        elif self.types == 'output':
+            pin_int = pin_to_int(refr)
+            if front == 0 and back == 0:
+                if on_ms not in self.data['hold']:
+                    self.data['hold'][on_ms] = pin_int
+                elif on_ms in self.data['hold']:
+                    self.data['hold'][on_ms] += pin_int
+                if on_ms + off_ms not in self.data['hold']:
+                    self.data['hold'][on_ms + off_ms] = pin_int
+                elif on_ms + off_ms in self.data['hold']:
+                    self.data['hold'][on_ms + off_ms] += pin_int
+            if front == 1:
+                if self.data['hold'][on_ms] == (2 * pin_int):
+                    self.data['hold'].pop(on_ms)
+                else:
+                    self.data['hold'][on_ms] -= (2 * pin_int)
+            if back == 1:
+                if self.data['hold'][on_ms + off_ms] == (2 * pin_int):
+                    self.data['hold'].pop(on_ms + off_ms)
+                else:
+                    self.data['hold'][on_ms + off] -= (2 * pin_int)
+
+    def pre_close(self):
+        """Forces focus on button to do final validation check
+        on last field entered in"""
+        focus_is_entry = False
+        current_focus = self.root.focus_get()
+        if self.types == 'tone':
+            if current_focus in self.entries:
+                focus_is_entry = True
+        elif self.types in ['pwm', 'output']:
+            for pin in self.entries:
+                if current_focus in pin:
+                    focus_is_entry = True
+        if focus_is_entry:
+            # We indicate to entry_validate that we wish to close gui
+            self.close_gui = True
+            # then we force focus on the close button to
+            # trigger validation on the last used entry field
+            self.closebutton.focus()
+        else:
+            # if we aren't focused on a field, we close
+            self.close()
+
+    # noinspection PyUnresolvedReferences,PyTypeChecker
+    def close(self):
+        """Exits GUI Safely; otherwise we perform self.hard_exit()
+        which will not save config settings"""
+        # If we configured a max time higher than what it was before, update
+        if self.max_time > dirs.settings.ard_last_used['packet'][3]:
+            to_save = deepcopy(dirs.settings.ard_last_used)
+            to_save['packet'][3] = self.max_time
+            dirs.threadsafe_edit(recipient='ard_last_used', donor=to_save)
+            main.ttl_time = self.max_time
+            main.grab_ard_data(destroy=True)
+            mins = format_secs(self.max_time / 1000, option='min')
+            secs = format_secs(self.max_time / 1000, option='sec')
+            main.min_entry.delete(0, Tk.END)
+            main.min_entry.insert(Tk.END, '{:0>2}'.format(mins))
+            main.sec_entry.delete(0, Tk.END)
+            main.sec_entry.insert(Tk.END, '{:0>2}'.format(secs))
+        # Retrieve data that we saved up so masterGUI can load and use
+        self.return_data = []
+        if self.types == 'output':
+            self.return_data = self.data['hold']
+        elif self.types == 'tone':
+            for freq in self.data['hold']:
+                self.data['hold'][freq] = sorted(self.data['hold'][freq])
+                for i in range(len(self.data['hold'][freq])):
+                    if i % 2 == 0:
+                        self.return_data.append([self.data['hold'][freq][i],
+                                                 self.data['hold'][freq][i + 1],
+                                                 freq])
+        elif self.types == 'pwm':
+            for pin_int in self.data['hold']:
+                for refr in self.data['hold'][pin_int]:
+                    refr_i = str(refr)
+                    freq_i, duty_i, phase_i = (int(refr_i[:-10]),
+                                               int(refr_i[-10:-5]),
+                                               int(refr_i[-5:]))
+                    self.data['hold'][pin_int][refr] = sorted(self.data['hold'][pin_int][refr])
+                    for i in range(len(self.data['hold'][pin_int][refr])):
+                        if i % 2 == 0:
+                            self.return_data.append([0,
+                                                     self.data['hold'][pin_int][refr][i],
+                                                     self.data['hold'][pin_int][refr][i + 1],
+                                                     freq_i,
+                                                     pin_int,
+                                                     phase_i,
+                                                     duty_i])
+        self.root.destroy()
+        self.root.quit()
+
+
+class MasterGUI(GUI):
+    """Main GUI.
+    NOTE: Perform all GUI functions here, and here only!
+    Tasks that take >1s to perform can be done in a thread,
+    but interactions must be strictly through queues.
+    Note on queues: do NOT process GUI objects in separate threads
+    (e.g. PhotoImages, Canvas items, etc) even if they can be sent through queues.
+        this WILL cause crashes under load or unexpected circumstances."""
+    def __init__(self, master):
+        GUI.__init__(self, master, topmost=False)
+        self.master = self.root
+        self.master.title('Fear Control')
+        # Fonts
+        self.time_label_font = tkFont.Font(family='Arial', size=8)
+        self.label_font = tkFont.Font(family='Arial', size=10)
+        self.label_font_symbol = tkFont.Font(family='Arial', size=9)
+        # Widget Configs
+        self.single_widget_dim = 100
+        # noinspection PyUnresolvedReferences
+        self.balloon = Pmw.Balloon(master)
+        ###################################################################
+        # Note on Threading Control:
+        # All queues initiated by child thread that puts data IN
+        # All locks initiated by child thread that CONTROLS its set and clear
+        ###################################################################
+        # Devices
+        self.device_status_queue = Queue.Queue()
+        self.instructions_queue = Queue.Queue()
+        ###########################
+        # Save variables
+        self.save_dir_name_used = []
+        self.results_dir_used = {}
+        # Arduino config variables
+        self.ttl_time = dirs.settings.ard_last_used['packet'][3]
+        ###########################
+        # GUI setup
         self.render_photometry()
         self.render_saves()
         self.render_lj()
         self.render_arduino()
         self.render_camera()
-        ###############
-        # experimental stuff
-        Example(self.master).grid(row=20, column=1, sticky=Tk.W)
-        #########################################
-        self.gui_update_window()
+        self.progbar_started = False
+        ###########################
+        # Finalize GUI window and launch
+        self.thread_handler = GUIThreadHandler(master_gui_queue=self.device_status_queue,
+                                               instructions_queue=self.instructions_queue)
+        self.thread_handler.start()
+        self.master.after(10, self.gui_event_loop)
+        self.master.after(10, self.video_stream)
+        self.center()
 
-    # GUI setup
+    # THESE FUNCTIONS DO NOT INTERACT WITH DEVICES
+    #####################################################################
+    # GUI Setup
+    #####################################################################
     def render_photometry(self):
-        """photometry gui setup"""
-        # Frame
-        photometry_frame = Tk.LabelFrame(self.master,
-                                         text='Optional Photometry Config.',
-                                         width=self.single_widget_dim * 2,
-                                         height=self.single_widget_dim,
-                                         highlightthickness=5)
-        photometry_frame.grid(row=0, column=0, sticky=self.ALL)
+        """sets up photometry component"""
+        frame = Tk.LabelFrame(self.master, text='Optional Photometry Config.',
+                              width=self.single_widget_dim * 2,
+                              height=self.single_widget_dim)
+        frame.grid(row=0, column=0, sticky=self.ALL)
         # Variables
-        self.fp_bool = Tk.IntVar()
-        self.fp_bool.set(0)
-        self.fp_str_var = Tk.StringVar()
-        self.fp_str_var.set('\n[N/A]\n')
+        self.fp_toggle_var = Tk.IntVar()
+        self.fp_toggle_var.set(0)
+        self.fp_statustext_var = Tk.StringVar()
+        self.fp_statustext_var.set('\n[N/A]\n')
         # Buttons
-        self.fp_checkbutton = Tk.Checkbutton(photometry_frame,
-                                             text='Toggle Photometry On/Off',
-                                             variable=self.fp_bool,
-                                             onvalue=1, offvalue=0,
-                                             command=self.fp_toggle)
-        self.fp_checkbutton.pack()
-        self.start_gui_button = Tk.Button(photometry_frame,
+        self.fp_toggle_button = Tk.Checkbutton(frame, text='Toggle Photometry On/Off',
+                                               variable=self.fp_toggle_var,
+                                               onvalue=1, offvalue=0,
+                                               command=self.fp_toggle)
+        self.fp_toggle_button.pack()
+        self.fp_config_button = Tk.Button(frame,
                                           text='CONFIG',
                                           command=self.fp_config)
-        self.start_gui_button.pack()
-        self.start_gui_button.config(state='disabled')
-        Tk.Label(photometry_frame, textvariable=self.fp_str_var).pack()
+        self.fp_config_button.pack()
+        self.fp_config_button.config(state='disabled')
+        Tk.Label(frame, textvariable=self.fp_statustext_var).pack()
 
     def render_saves(self):
         """save gui setup"""
         self.save_grab_list()
-        # Primary Save Frame
-        save_frame = Tk.LabelFrame(self.master,
-                                   text='Data Output Save Location',
-                                   width=self.single_widget_dim * 2,
-                                   height=self.single_widget_dim,
-                                   highlightthickness=5,
-                                   highlightcolor='white')
-        save_frame.grid(row=1, column=0,
-                        columnspan=1,
-                        sticky=self.ALL)
-        # Display Save Name Chosen
-        self.save_file_name = Tk.StringVar()
-        save_file_label = Tk.Label(save_frame,
-                                   textvariable=self.save_file_name,
+        # 1. Primary Save Frame
+        frame = Tk.LabelFrame(self.master,
+                              text='Data Output Save Location',
+                              width=self.single_widget_dim * 2,
+                              height=self.single_widget_dim)
+        frame.grid(row=1, column=0, sticky=self.ALL)
+        # Display chosen save name / last used save name
+        self.save_status_var = Tk.StringVar()
+        save_file_label = Tk.Label(frame, textvariable=self.save_status_var,
                                    relief=Tk.RAISED)
         save_file_label.pack(side=Tk.TOP, expand='yes', fill='both')
-        # Secondary Save Frame: Existing Saves
-        existing_frame = Tk.LabelFrame(save_frame,
-                                       text='Select a Save Name')
+        # 2a. Secondary Save Frame: Existing Saves
+        existing_frame = Tk.LabelFrame(frame, text='Select a Save Name')
         existing_frame.pack(fill='both', expand='yes')
-        self.dir_chosen = Tk.StringVar()
-        self.save_file_name.set('Last Used Save Dir.:'
-                                '\n[{}]'.format(limit_string_length(dirs.settings.save_dir.upper(),
-                                                                    20)))
-        self.dir_chosen.set('{: <25}'.format(dirs.settings.save_dir))
+        self.chosen_dir_var = Tk.StringVar()
+        self.save_status_var.set('Last Used Save Dir.:'
+                                 '\n[{}]'.format(lim_str_len(dirs.settings.save_dir.upper(), 30)))
+        self.chosen_dir_var.set('{: <80}'.format(dirs.settings.save_dir))
         if len(self.save_dir_list) == 0:
             self.save_dir_menu = Tk.OptionMenu(existing_frame,
-                                               self.dir_chosen,
-                                               ' ' * 15)
+                                               self.chosen_dir_var, ' ' * 15)
         else:
             self.save_dir_menu = Tk.OptionMenu(existing_frame,
-                                               self.dir_chosen,
+                                               self.chosen_dir_var,
                                                *self.save_dir_list,
                                                command=lambda path:
                                                self.save_button_options(inputs=path))
-        self.save_dir_menu.config(width=20)
+        self.save_dir_menu.config(width=39)
         self.save_dir_menu.grid(sticky=self.ALL, columnspan=2)
-        # Secondary Save Frame: New Saves
-        new_frame = Tk.LabelFrame(save_frame, text='Create a New Save Location')
+        # 2b. Secondary Save Frame: New Saves
+        new_frame = Tk.LabelFrame(frame, text='Create a New Save Location')
         new_frame.pack(fill='both', expand='yes')
         self.new_save_entry = Tk.Entry(new_frame)
-        self.new_save_entry.pack(side=Tk.TOP)
+        self.new_save_entry.pack(side=Tk.TOP, fill='both', expand='yes')
         self.new_save_button = Tk.Button(new_frame,
                                          text='Create New',
                                          command=lambda:
@@ -347,219 +1425,181 @@ class MasterGUI(object):
         self.new_save_button.pack(side=Tk.TOP)
 
     def render_lj(self):
-        """render lj config gui"""
+        """lj config gui"""
         # Frame
-        lj_frame = Tk.LabelFrame(self.master,
-                                 text='LabJack Config.',
-                                 width=self.single_widget_dim * 2,
-                                 height=self.single_widget_dim,
-                                 highlightthickness=5)
-        lj_frame.grid(row=2, column=0, sticky=self.ALL)
+        frame = Tk.LabelFrame(self.master, text='LabJack Config.',
+                              width=self.single_widget_dim * 2,
+                              height=self.single_widget_dim)
+        frame.grid(row=2, column=0, sticky=self.ALL)
         # Variables
-        self.lj_str_var = Tk.StringVar()
+        self.lj_status_var = Tk.StringVar()
         channels = dirs.settings.lj_last_used['ch_num']
         freq = dirs.settings.lj_last_used['scan_freq']
-        self.lj_str_var.set('Channels:\n'
-                            '{}\n\n'
-                            'Scan Freq: '
-                            '[{}Hz]'.format(channels, freq))
+        self.lj_status_var.set('Channels:\n'
+                               '{}\n\n'
+                               'Scan Freq: '
+                               '[{}Hz]'.format(channels, freq))
         # Current State Report
-        Tk.Label(lj_frame, textvariable=self.lj_str_var).pack(side=Tk.TOP)
+        Tk.Label(frame, textvariable=self.lj_status_var).pack(side=Tk.TOP)
         # Config Button
-        self.lj_config_button = Tk.Button(lj_frame,
-                                          text='CONFIG',
+        self.lj_config_button = Tk.Button(frame, text='CONFIG',
                                           command=self.lj_config)
         self.lj_config_button.pack(side=Tk.BOTTOM, expand=True)
+        # Post experiment LabJack report frame
+        report_frame = Tk.LabelFrame(self.master, text='Post Experiment LabJack Report')
+        report_frame.grid(row=3, column=1, sticky=self.ALL)
+        Example(report_frame).grid(row=0, column=0, sticky=self.ALL)
+        Example(report_frame).grid(row=0, column=1, sticky=self.ALL)
 
     def render_arduino(self):
-        """Arduino Config"""
+        """Sets up the main progress bar, arduino config buttons,
+        and various status message bars"""
         # Frame
         self.ard_preset_list = []
         self.ard_bckgrd_height = 260
-        ard_frame = Tk.LabelFrame(self.master,
-                                  text='Arduino Stimuli Config.',
+        ard_frame = Tk.LabelFrame(self.master, text='Arduino Stimuli Config.',
                                   width=self.single_widget_dim * 11,
                                   height=self.ard_bckgrd_height)
-        ard_frame.grid(row=0,
-                       rowspan=3,
-                       column=1,
-                       sticky=self.ALL)
+        ard_frame.grid(row=0, rowspan=3, column=1, sticky=self.ALL)
         Tk.Label(ard_frame,
                  text='Last used settings shown. '
                       'Click then rollover individual segments for '
                       'specific stimuli config information.',
-                 relief=Tk.RAISED).grid(row=0,
-                                        columnspan=55,
-                                        sticky=self.ALL)
+                 relief=Tk.RAISED).grid(row=0, columnspan=55, sticky=self.ALL)
         # Debug Buttons
         self.debug_button = Tk.Button(ard_frame, text='DEBUG',
                                       command=self.gui_debug)
         self.debug_button.grid(row=0, column=80, columnspan=10, sticky=self.ALL)
         self.clr_svs_button = Tk.Button(ard_frame, text='ClrSvs',
-                                        command=lambda:
-                                        dirs.clear_saves(self.master))
+                                        command=self.clear_saves)
         self.clr_svs_button.grid(row=0, column=90, columnspan=10, sticky=self.ALL)
         # Main Progress Canvas
-        self.ard_canvas = Tk.Canvas(ard_frame,
-                                    width=1050,
-                                    height=self.ard_bckgrd_height + 10)
-        self.ard_canvas.grid(row=1,
-                             column=0,
-                             columnspan=100)
-        self.gui_canvas_init()
+        self.ard_canvas = Tk.Canvas(ard_frame, width=1050, height=self.ard_bckgrd_height + 10)
+        self.ard_canvas.grid(row=1, column=0, columnspan=100)
+        self.gui_canvas_initialize()
         # Progress Bar Control Buttons
-        bs_row = 5
-        self.prog_on = Tk.Button(ard_frame,
-                                 text='START')
-        self.prog_on.grid(row=bs_row,
-                          column=4,
-                          stick=self.ALL)
-        self.prog_off = Tk.Button(ard_frame,
-                                  text='STOP')
-        self.prog_off.grid(row=bs_row + 1,
-                           column=4,
-                           stick=self.ALL)
+        self.prog_on = Tk.Button(ard_frame, text='START')
+        self.prog_on.grid(row=5, column=4, stick=self.ALL)
+        self.prog_off = Tk.Button(ard_frame, text='STOP')
+        self.prog_off.grid(row=5 + 1, column=4, stick=self.ALL)
+        self.prog_on.config(command=self.progbar_run)
+        self.prog_off.config(state=Tk.DISABLED,
+                             command=self.progbar_stop)
         # Grab Data and Generate Progress Bar
         self.ard_grab_data()
         # Arduino Presets
-        as_row = 7
         self.ard_update_preset_list()
-        self.ard_preset_chosen = Tk.StringVar()
-        self.ard_preset_chosen.set('{: <40}'.format('(select a preset)'))
+        self.ard_preset_chosen_var = Tk.StringVar()
+        self.ard_preset_chosen_var.set('{: <50}'.format('(select a preset)'))
         self.ard_preset_menu = Tk.OptionMenu(ard_frame,
-                                             self.ard_preset_chosen,
+                                             self.ard_preset_chosen_var,
                                              *self.ard_preset_list,
                                              command=lambda file_in:
                                              self.ard_grab_data(True, file_in))
-        self.ard_preset_menu.grid(row=as_row,
-                                  column=0,
-                                  columnspan=5,
-                                  sticky=self.ALL)
-        self.ard_preset_menu.config(width=10)
+        self.ard_preset_menu.grid(row=7, column=0, columnspan=5, sticky=self.ALL)
         # Manual Arduino Setup
         # Total Experiment Time Config
-        ts_row = 3
         Tk.Label(ard_frame, text='MM',
-                 font=self.time_label_font).grid(row=ts_row, column=1, sticky=self.ALL)
-
+                 font=self.time_label_font).grid(row=3, column=1, sticky=self.ALL)
         Tk.Label(ard_frame, text='SS',
-                 font=self.time_label_font).grid(row=ts_row, column=3, sticky=self.ALL)
+                 font=self.time_label_font).grid(row=3, column=3, sticky=self.ALL)
         Tk.Label(ard_frame,
-                 text='Total Experiment Time:').grid(row=ts_row + 1,
-                                                     column=0,
-                                                     sticky=self.ALL)
+                 text='Total Experiment Time:').grid(row=3 + 1, column=0, sticky=self.ALL)
         # Minutes
         self.min_entry = Tk.Entry(ard_frame, width=2)
-        self.min_entry.grid(row=ts_row + 1, column=1, sticky=self.ALL)
-        self.min_entry.insert(Tk.END,
-                              '{}'.format(min_from_sec(self.ttl_time / 1000, option='min')))
-        Tk.Label(ard_frame, text=':').grid(row=ts_row + 1, column=2, sticky=self.ALL)
+        self.min_entry.grid(row=3 + 1, column=1, sticky=self.ALL)
+        self.min_entry.insert(Tk.END, '{}'.format(format_secs(self.ttl_time / 1000, option='min')))
+        Tk.Label(ard_frame, text=':').grid(row=3 + 1, column=2, sticky=self.ALL)
         # Seconds
         self.sec_entry = Tk.Entry(ard_frame, width=2)
-        self.sec_entry.grid(row=ts_row + 1, column=3, sticky=self.ALL)
-        self.sec_entry.insert(Tk.END,
-                              '{}'.format(min_from_sec(self.ttl_time / 1000,
-                                                       option='sec')))
-        self.ard_time_confirm = Tk.Button(ard_frame, text='Confirm',
-                                          command=self.ard_get_time)
-        self.ard_time_confirm.grid(row=ts_row + 1, column=4, sticky=self.ALL)
-        # Tone Config
-        self.tone_setup = Tk.Button(ard_frame, text='Tone Setup',
-                                    command=lambda types='tone':
-                                    self.ard_config(types))
-        self.tone_setup.grid(row=5, column=0, sticky=self.ALL)
-        self.out_setup = Tk.Button(ard_frame, text='PWM Setup',
-                                   command=lambda types='pwm':
-                                   self.ard_config(types))
-        self.out_setup.grid(row=5, rowspan=2, column=1, columnspan=3, sticky=self.ALL)
-        self.pwm_setup = Tk.Button(ard_frame, text='Simple Outputs',
-                                   command=lambda types='output':
-                                   self.ard_config(types))
-        self.pwm_setup.grid(row=6, column=0, sticky=self.ALL)
+        self.sec_entry.grid(row=3 + 1, column=3, sticky=self.ALL)
+        self.sec_entry.insert(Tk.END, '{}'.format(format_secs(self.ttl_time / 1000, option='sec')))
+        self.ard_time_confirm_button = Tk.Button(ard_frame, text='Confirm',
+                                                 command=self.ard_get_time)
+        self.ard_time_confirm_button.grid(row=3 + 1, column=4, sticky=self.ALL)
+        # Stimuli Config
+        self.tone_setup_button = Tk.Button(ard_frame, text='Tone Setup',
+                                           command=lambda types='tone':
+                                           self.ard_config(types))
+        self.tone_setup_button.grid(row=5, column=0, sticky=self.ALL)
+        self.out_setup_button = Tk.Button(ard_frame, text='Simple\nOutputs',
+                                          command=lambda types='output':
+                                          self.ard_config(types))
+        self.out_setup_button.grid(row=5, rowspan=2, column=1, columnspan=3, sticky=self.ALL)
+        self.pwm_setup_button = Tk.Button(ard_frame, text='PWM Setup',
+                                          command=lambda types='pwm':
+                                          self.ard_config(types))
+        self.pwm_setup_button.grid(row=6, column=0, sticky=self.ALL)
         # Status messages for devices
-        Tk.Label(ard_frame, text='Devices:  ', relief=Tk.RAISED).grid(row=0,
-                                                                      column=60,
+        Tk.Label(ard_frame, text='Devices:  ', relief=Tk.RAISED).grid(row=0, column=60,
                                                                       columnspan=10,
                                                                       sticky=self.ALL)
         # arduino
-        self.ard_status = Tk.StringVar()
-        Tk.Label(ard_frame, anchor=Tk.E, text='Arduino Status:  ').grid(row=4,
-                                                                        column=10,
+        self.ard_status_bar = Tk.StringVar()
+        Tk.Label(ard_frame, anchor=Tk.E, text='Arduino Status:  ').grid(row=4, column=10,
                                                                         columnspan=15,
                                                                         sticky=self.ALL)
         ard_status_display = Tk.Label(ard_frame, anchor=Tk.W,
-                                      textvariable=self.ard_status,
+                                      textvariable=self.ard_status_bar,
                                       relief=Tk.SUNKEN)
         ard_status_display.grid(row=4, column=25, columnspan=70, sticky=self.ALL)
-        self.ard_status.set('null')
+        self.ard_status_bar.set('null')
         self.ard_toggle_var = Tk.IntVar()
         self.ard_toggle_var.set(1)
         self.ard_toggle_button = Tk.Checkbutton(ard_frame, variable=self.ard_toggle_var, text='Arduino',
-                                                onvalue=1, offvalue=0,
-                                                command=lambda:
+                                                onvalue=1, offvalue=0, command=lambda:
                                                 self.device_status_msg_toggle(self.ard_toggle_var,
-                                                                              self.ard_status,
-                                                                              ard_status_display))
+                                                                              self.ard_status_bar,
+                                                                              ard_status_display,
+                                                                              name='ard'))
         self.ard_toggle_button.grid(row=0, column=70, sticky=Tk.E)
         # LabJack
-        self.lj_status = Tk.StringVar()
-        Tk.Label(ard_frame, anchor=Tk.E, text='LabJack Status:  ').grid(row=5,
-                                                                        column=10,
+        self.lj_status_bar = Tk.StringVar()
+        Tk.Label(ard_frame, anchor=Tk.E, text='LabJack Status:  ').grid(row=5, column=10,
                                                                         columnspan=15,
                                                                         sticky=self.ALL)
         lj_status_display = Tk.Label(ard_frame, anchor=Tk.W,
-                                     textvariable=self.lj_status,
+                                     textvariable=self.lj_status_bar,
                                      relief=Tk.SUNKEN)
         lj_status_display.grid(row=5, column=25, columnspan=70, sticky=self.ALL)
-        self.lj_status.set('null')
+        self.lj_status_bar.set('null')
         self.lj_toggle_var = Tk.IntVar()
         self.lj_toggle_var.set(1)
         self.lj_toggle_button = Tk.Checkbutton(ard_frame, variable=self.lj_toggle_var, text='LabJack',
-                                               onvalue=1, offvalue=0,
-                                               command=lambda:
+                                               onvalue=1, offvalue=0, command=lambda:
                                                self.device_status_msg_toggle(self.lj_toggle_var,
-                                                                             self.lj_status,
+                                                                             self.lj_status_bar,
                                                                              lj_status_display,
-                                                                             options='lj'))
+                                                                             name='lj'))
         self.lj_toggle_button.grid(row=0, column=72, sticky=Tk.E)
         # Camera
-        self.cmr_status = Tk.StringVar()
+        self.cmr_status_bar = Tk.StringVar()
         Tk.Label(ard_frame, anchor=Tk.E, text='Camera Status: ').grid(row=6, column=10,
                                                                       columnspan=15, sticky=self.ALL)
-        cmr_status_display = Tk.Label(ard_frame, anchor=Tk.W, textvariable=self.cmr_status,
+        cmr_status_display = Tk.Label(ard_frame, anchor=Tk.W, textvariable=self.cmr_status_bar,
                                       relief=Tk.SUNKEN)
         cmr_status_display.grid(row=6, column=25, columnspan=70, sticky=self.ALL)
-        self.cmr_status.set('null')
+        self.cmr_status_bar.set('null')
         self.cmr_toggle_var = Tk.IntVar()
         self.cmr_toggle_var.set(1)
         self.cmr_toggle_button = Tk.Checkbutton(ard_frame, variable=self.cmr_toggle_var, text='Camera',
-                                                onvalue=1, offvalue=0,
-                                                command=lambda:
+                                                onvalue=1, offvalue=0, command=lambda:
                                                 self.device_status_msg_toggle(self.cmr_toggle_var,
-                                                                              self.cmr_status,
-                                                                              cmr_status_display))
+                                                                              self.cmr_status_bar,
+                                                                              cmr_status_display,
+                                                                              name='cmr'))
         self.cmr_toggle_button.grid(row=0, column=74, sticky=Tk.E)
-        if not ENABLE_CAMERA:
-            cmr_status_display.config(state=Tk.DISABLED)
-            self.cmr_toggle_button.config(state=Tk.DISABLED)
-            self.cmr_status.set('FlyCapture2a Module not detected.')
-            self.cmr_toggle_var.set(0)
+        # Save Status
+        self.save_status_bar = Tk.StringVar()
+        Tk.Label(ard_frame, anchor=Tk.E, text='Save Status: ').grid(row=7, column=10,
+                                                                    columnspan=15, sticky=self.ALL)
+        save_status_display = Tk.Label(ard_frame, anchor=Tk.W, textvariable=self.save_status_bar,
+                                       relief=Tk.SUNKEN)
+        save_status_display.grid(row=7, column=25, columnspan=70, sticky=self.ALL)
+        self.save_status_bar.set('null')
 
-    def render_camera(self):
-        """sets up camera feed"""
-        self.camera_panel = Tk.Label(self.master)
-        self.camera_panel.grid(row=20, column=0)
-        if ENABLE_CAMERA:
-            self.camera = FireFly(exp_lock=self.exp_lock,
-                                  report_queue=self.cmr_queue)
-            self.cmr_connected = True
-        self.record()
-
-    # General GUI Functions
-    def gui_canvas_init(self):
-        """
-        Setup Progress bar Canvas
-        """
+    def gui_canvas_initialize(self):
+        """Setup Progress bar Canvas"""
         # Backdrop
         self.ard_canvas.create_rectangle(0, 0,
                                          1050, self.ard_bckgrd_height,
@@ -643,175 +1683,134 @@ class MasterGUI(object):
         self.ard_canvas.create_text(1027 + 6, 235 + 10,
                                     text='13', fill='white')
 
-    def gui_update_window(self):
-        """
-        Update GUI Idle tasks, and centers
-        """
-        self.master.update_idletasks()
-        screen_width = self.master.winfo_screenwidth()
-        screen_height = self.master.winfo_screenheight()
-        [window_width, window_height] = list(int(i) for i in
-                                             self.master.geometry().split('+')[0].split('x'))
-        x_pos = screen_width / 2 - window_width / 2
-        y_pos = screen_height / 2 - window_height / 2
-        self.master.geometry('{}x{}+{}+{}'.format(window_width,
-                                                  window_height,
-                                                  x_pos, y_pos))
+    def render_camera(self):
+        """sets up camera feed"""
+        frame = Tk.LabelFrame(self.master, text='Camera Feed')
+        frame.grid(row=3, column=0)
+        self.camera_panel = Tk.Label(frame)
+        self.camera_panel.grid(row=0, column=0, sticky=self.ALL)
+        self.video_stream()
+
+    # Genera GUI Functions
+    #####################################################################
+    def gui_event_loop(self):
+        """Master GUI will call this periodically to check for
+        thread queue items"""
+        try:
+            msg = self.device_status_queue.get_nowait()
+            if DEBUG:
+                print msg
+            if msg == '<ex_succ>':
+                self.master.destroy()
+                self.master.quit()
+            elif msg.startswith('<ex_err>'):
+                msg = msg[8:].split(',')
+                devices = ''
+                if 'lj' in msg:
+                    devices += 'LabJack, '
+                if 'cmr' in msg:
+                    devices += 'Camera, '
+                if 'ard' in msg:
+                    devices += 'Arduino, '
+                devices = devices[:-2]
+                tkMb.showwarning('Warning!', 'The following devices '
+                                             'did not close properly: \n\n'
+                                             '[{}]\n\n'
+                                             'This may cause issues on subsequent'
+                                             ' runs. You may wish to perform a manual'
+                                             ' Hard Reset.'.format(devices))
+                self.master.destroy()
+                self.master.quit()
+            elif msg.startswith('<lj>'):
+                msg = msg[4:]
+                self.lj_status_bar.set(msg)
+            elif msg.startswith('<ard>'):
+                msg = msg[5:]
+                self.ard_status_bar.set(msg)
+            elif msg.startswith('<cmr>'):
+                msg = msg[5:]
+                self.cmr_status_bar.set(msg)
+            elif msg.startswith('<exp_end>'):
+                self.run_bulk_toggle(running=False)
+                self.progbar_started = False
+                msg = msg[9:]
+                self.save_status_bar.set(msg)
+            elif msg in ['<ljst>', '<ardst>', '<cmrst>']:
+                if not self.progbar_started:
+                    self.progbar.start()
+                elif self.progbar_started:
+                    pass
+        except Queue.Empty:
+            pass
+        self.master.after(50, self.gui_event_loop)
 
     def gui_debug(self):
-        """
-        Under the hood stuff here
-        """
-        print '#' * 40 + 'DEBUG\n\n'
-        print 'SETTINGS'
+        """Under the hood stuff printed when press debug button"""
+        print '#' * 40 + '\nDEBUG\n' + '#' * 40
+        print '\nSETTINGS'
         pprint(vars(dirs.settings))
         print '#' * 15
-        print 'ACTIVE THREADS: {}'.format(threading.active_count())
-        print 'CAMERA QUEUE COUNT: {}'.format(self.camera.frame_give_queue.qsize())
+        print 'CAMERA QUEUE COUNT: {}'.format(self.thread_handler.cmr_device.data_queue.qsize())
+        print 'ACTIVE THREADCOUNT: {}'.format(threading.active_count())
+        print 'ACTIVE THREADS: '
+        threads = threading.enumerate()
+        for thread_index in range(len(threads)):
+            print '    {} - {}'.format(thread_index, threads[thread_index].name)
 
     def hard_exit(self, allow=True):
-        """
-        Handles threads first before exiting for a clean close
-        """
-        lj_error, cmr_error = False, False
+        """Handles devices before exiting for a clean close"""
         if allow:
-            # Make sure LabJack is closed
-            try:
-                main.lj_device.streamStop()
-                main.lj_device.close()
-                print 'LJ Closed 1'
-            except LabJackPython.LabJackException:
-                try:
-                    main.lj_device.close()
-                    main.lj_device.streamStop()
-                    print 'LJ Closed 2'
-                except LabJackPython.LabJackException:
-                    try:
-                        main.lj_device.close()
-                        print 'LJ Closed 3'
-                    except LabJackPython.LabJackException:
-                        lj_error = True
-            except AttributeError:
-                pass
-            # ... and camera
-            if ENABLE_CAMERA:
-                try:
-                    self.camera.close()
-                    print 'Camera Closed'
-                except fc2.ApiError:
-                    cmr_error = True
-                    pass
-                except AttributeError:
-                    pass
-            if lj_error and cmr_error:
-                tkMb.showwarning('Warning!',
-                                 'Neither the LabJack nor the Camera could be closed '
-                                 'properly. This will cause issues on '
-                                 'the next run.\n\n'
-                                 'You may wish to manually disconnect and '
-                                 'reconnect the devices for a hard reset.')
-            elif lj_error:
-                tkMb.showwarning('Warning!',
-                                 'The LabJack could not be closed '
-                                 'properly. This will cause issues on '
-                                 'the next run.\n\n'
-                                 'You may wish to manually disconnect and '
-                                 'reconnect the device for a hard reset.')
-            elif cmr_error:
-                tkMb.showwarning('Warning!',
-                                 'The Camera could not be closed '
-                                 'properly. This will cause issues on '
-                                 'the next run.\n\n'
-                                 'You may wish to manually disconnect and '
-                                 'reconnect the device for a hard reset.')
-            self.master.destroy()
-            self.master.quit()
+            self.instructions_queue.put_nowait('<exit>')
         else:
-            tkMb.showwarning('Error!',
-                             'Please STOP the experiment first.',
+            tkMb.showwarning('Error!', 'Please STOP the experiment first.',
                              parent=self.master)
 
-    def gui_queue_process(self, queue, success_msg, fail_msg,
-                          success_fn=None, fail_fn=None,
-                          header='<no_header>', header_var=None,
-                          rate=100):
-        """
-        Processes queues passed to threads
-        """
-        rerun = False
-        try:
-            queue_msg = queue.get(0)
-            if queue_msg.startswith(header):
-                header_var.set(queue_msg.replace(header, ''))
-                rerun = True
-            elif queue_msg in success_msg:
-                success_msg.remove(queue_msg)
-                if len(success_msg) == 0:
-                    if success_fn is not None:
-                        if success_fn == 'RunProg>>':
-                            self.progbar.start()
-                            self.run_bulk_toggle(running=False)
-                        else:
-                            success_fn()
-                    else:
-                        self.master_queue.put(queue_msg)
-                else:
-                    rerun = True
-            elif queue_msg in fail_msg:
-                if fail_fn is not None:
-                    fail_fn()
-                else:
-                    self.master_queue.put(fail_msg[0])
-        except Queue.Empty:
-            if len(success_msg) == 0:
-                success_fn()
-            else:
-                rerun = True
-        if rerun:
-            self.master.after(rate, lambda:
-                              self.gui_queue_process(queue=queue,
-                                                     success_msg=success_msg,
-                                                     fail_msg=fail_msg,
-                                                     success_fn=success_fn,
-                                                     fail_fn=fail_fn,
-                                                     header=header, header_var=header_var,
-                                                     rate=rate))
-
-    def device_status_msg_toggle(self, var, status, display, options=None):
-        """
-        Hides or displays device statuses depending on
-         toggle state
+    def device_status_msg_toggle(self, var, status, display, name):
+        """Hides or displays device statuses depending on
+        toggle state
+        var: TkInt variable that we check
+        status: status msg of the device
+        display: the status msg bar of the device
         """
         if var.get() == 0:
             status.set('disabled')
             display.config(state=Tk.DISABLED)
-            if options == 'lj':
-                self.exp_lock.set()
-                self.read_lock.set()
+            self.instructions_queue.put_nowait('<{}off>'.format(name))
         elif var.get() == 1:
             status.set('enabled')
             display.config(state=Tk.NORMAL)
-            if options == 'lj':
-                self.exp_lock.clear()
-                self.read_lock.clear()
+            self.instructions_queue.put_nowait('<{}on>'.format(name))
+        # experiment start button is only available if at least one device is enabled
         if self.ard_toggle_var.get() == 0 and self.lj_toggle_var.get() == 0 and self.cmr_toggle_var.get() == 0:
             self.prog_on.config(state=Tk.DISABLED)
         elif self.ard_toggle_var.get() == 1 or self.lj_toggle_var.get() == 1 or self.cmr_toggle_var.get() == 1:
             self.prog_on.config(state=Tk.NORMAL)
 
-    # Save Functions
+    def clear_saves(self):
+        """Removes all settings and save directories"""
+        if tkMb.askyesno('Warning!', 'This DELETES ALL settings, presets, '
+                                     'and data saves!\n It should be '
+                                     'used for debugging purposes only.\n\n'
+                                     'Are you sure?',
+                         default='no', parent=self.master):
+            dirs.clear_saves()
+            time.sleep(0.5)
+            tkMb.showinfo('Finished', 'All settings and saves '
+                                      'deleted. Program will now exit.',
+                          parent=self.master)
+            dirs.save_on_exit = False
+            self.hard_exit()
+
+    # Save GUI Methods
+    #####################################################################
     def save_grab_list(self):
-        """
-        Updates output save directories list
-        """
+        """Updates output save directories list"""
         self.save_dir_list = [d for d
                               in os.listdir(dirs.main_save_dir)
                               if os.path.isdir(dirs.main_save_dir + d)]
 
     def save_button_options(self, inputs=None, new=False):
-        """
-        Determines whether to make a new save folder or not
-        """
+        """Determines whether to make a new save folder or not:"""
         self.save_grab_list()
         ready = 0
         if new:
@@ -834,103 +1833,89 @@ class MasterGUI(object):
                 if len(self.save_dir_list) == 0:
                     menu.delete(0, Tk.END)
                 self.save_dir_to_use = str(new_save_entry)
-                self.dir_chosen.set(self.save_dir_to_use)
+                self.chosen_dir_var.set(self.save_dir_to_use)
                 menu.add_command(label=self.save_dir_to_use,
                                  command=lambda path=self.save_dir_to_use:
                                  self.save_button_options(inputs=path))
                 self.save_dir_name_used.append(self.save_dir_to_use)
         else:
             ready = 1
-            self.dir_chosen.set(inputs)
-            self.save_dir_to_use = str(self.dir_chosen.get())
+            self.chosen_dir_var.set(inputs)
+            self.save_dir_to_use = str(self.chosen_dir_var.get())
         if ready == 1:
             self.preresults_dir = str(dirs.main_save_dir) + self.save_dir_to_use + '/'
             if self.preresults_dir not in self.results_dir_used:
-                dirs.results_dir = self.preresults_dir + '{} at [{}]/'.format(get_day(2), get_day(3))
+                dirs.results_dir = self.preresults_dir + '{}/'.format(format_daytime('daytime'))
                 self.make_save_dir = 1
             else:
                 dirs.results_dir = self.results_dir_used[self.preresults_dir]
                 self.make_save_dir = 0
-            self.save_file_name.set(
+            self.save_status_var.set(
                 'Currently Selected:\n[{}]'.format(
-                    limit_string_length(self.save_dir_to_use.upper(), 20)
+                    lim_str_len(self.save_dir_to_use.upper(), 30)
                 )
             )
             dirs.settings.save_dir = self.save_dir_to_use
 
-    # Camera methods
-    def record(self):
-        """live streaming"""
+    # Camera GUI Methods (exception: pulls image data from camera queue)
+    #####################################################################
+    def video_stream(self):
+        """live streams video feed from camera"""
+        # try:
+        #     print self.thread_handler.cmr_device.data_queue.qsize()
+        # except AttributeError:
+        #     pass
         try:
-            msg = self.camera.frame_give_queue.get_nowait()
-            if msg == '<begin>':
-                self.camera_recording = True
-                self.master.after(1, self.record)
-                return
-            elif msg == '<end>':
-                self.camera_recording = False
-                self.master.after(1, self.record)
-                return
-            else:
-                if self.camera_recording:
-                    img = PhotoImage(Image.fromarray(
-                        msg).resize(
-                        (288, 216)))#, Image.ANTIALIAS))
-                    self.camera_panel.configure(image=img)
-                    self.camera_panel.image = img
-        except Queue.Empty:
+            img = self.thread_handler.cmr_device.data_queue.get_nowait()
+        except (Queue.Empty, NameError, AttributeError):
             pass
-        if not self.camera_recording:
-            img = PhotoImage(Image.fromarray(
-                self.camera.context.tempImgGet()).resize(
-                (288, 216), Image.ANTIALIAS))
+        else:
+            img = PhotoImage(Image.fromarray(img).resize((288, 216), Image.ANTIALIAS))
             self.camera_panel.configure(image=img)
             self.camera_panel.image = img
-        self.master.after(15, self.record)
+        self.master.after(15, self.video_stream)
 
-
-    # LabJack Functions
+    # LabJack GUI Methods
+    #####################################################################
     def lj_config(self):
-        """
-        Opens LJ GUI for settings config
-        """
+        """Opens LJ GUI for settings config"""
         config = Tk.Toplevel(self.master)
         config_run = LabJackGUI(config)
         config_run.run()
         channels, freq = dirs.settings.quick_lj()
-        self.lj_str_var.set('Channels:\n{}\n'
-                            '\nScan Freq: [{}Hz]'.format(channels, freq))
+        self.lj_status_var.set('Channels:\n{}\n'
+                               '\nScan Freq: [{}Hz]'.format(channels, freq))
 
-    # Photometry Functions
+    # Photometry GUI Functions
+    #####################################################################
     def fp_toggle(self):
-        """
-        Toggles Photometry options On or Off
-        """
-        if self.fp_bool.get() == 1:
-            self.start_gui_button.config(state=Tk.NORMAL)
+        """Toggles Photometry options On or Off"""
+        if self.fp_toggle_var.get() == 1:
+            self.fp_config_button.config(state=Tk.NORMAL)
             ch_num, main_freq, isos_freq = dirs.settings.quick_fp()
             state = 'LabJack Channels: {}\nMain Freq: {}Hz\nIsos Freq: {}Hz'.format(ch_num,
                                                                                     main_freq,
                                                                                     isos_freq)
-            self.fp_str_var.set(state)
+            self.fp_statustext_var.set(state)
             self.fp_lj_sync()
-        elif self.fp_bool.get() == 0:
-            for i in dirs.settings.fp_last_used['ch_num']:
-                dirs.settings.lj_last_used['ch_num'].remove(i)
+        elif self.fp_toggle_var.get() == 0:
+            shared_ch = deepcopy([i for i in dirs.settings.fp_last_used['ch_num']
+                                  if i in dirs.settings.lj_last_used['ch_num']])
+            if len(shared_ch) == 3:
+                for i in shared_ch:
+                    dirs.settings.lj_last_used['ch_num'].remove(i)
             if len(dirs.settings.lj_last_used['ch_num']) == 0:
                 dirs.settings.lj_last_used['ch_num'].append(0)
             dirs.settings.lj_last_used['ch_num'].sort()
-            self.lj_str_var.set('Channels:\n{}\n'
-                                '\nScan Freq: [{}Hz]'.format(dirs.settings.lj_last_used['ch_num'],
+            self.lj_status_var.set('Channels:\n{}\n'
+                                   '\nScan Freq: [{}Hz]'.format(dirs.settings.lj_last_used['ch_num'],
                                                              dirs.settings.lj_last_used['scan_freq']))
-            self.start_gui_button.config(state=Tk.DISABLED)
-            self.fp_str_var.set('\n[N/A]\n')
+            self.fp_config_button.config(state=Tk.DISABLED)
+            self.fp_statustext_var.set('\n[N/A]\n')
 
     def fp_config(self):
-        """
-        Configures photometry options
-        """
-        fp_ch_num_old = copy.deepcopy(dirs.settings.fp_last_used['ch_num'])
+        """Configures photometry options"""
+        fp_ch_num_old = deepcopy(dirs.settings.fp_last_used['ch_num'])
         config = Tk.Toplevel(self.master)
         config_run = PhotometryGUI(config)
         config_run.run()
@@ -942,14 +1927,12 @@ class MasterGUI(object):
             for i in fp_ch_num_old:
                 dirs.settings.lj_last_used['ch_num'].remove(i)
         self.fp_lj_sync()
-        self.fp_str_var.set(state)
+        self.fp_statustext_var.set(state)
 
     def fp_lj_sync(self):
-        """
-        synchronizes fp and lj channels used
-        """
-        ch_num = dirs.settings.fp_last_used['ch_num']
-        lj_ch_num = dirs.settings.lj_last_used['ch_num']
+        """synchronizes fp and lj channels used"""
+        ch_num = deepcopy(dirs.settings.fp_last_used['ch_num'])
+        lj_ch_num = deepcopy(dirs.settings.lj_last_used['ch_num'])
         for i in ch_num:
             if i not in lj_ch_num:
                 lj_ch_num.append(i)
@@ -959,8 +1942,8 @@ class MasterGUI(object):
             dirs.settings.lj_last_used['ch_num'].sort()
             dirs.settings.lj_last_used['scan_freq'] = min(dirs.settings.lj_last_used['scan_freq'],
                                                           int(50000 / lj_n_ch))
-            self.lj_str_var.set('Channels:\n{}\n'
-                                '\nScan Freq: [{}Hz]'.format(lj_ch_num, dirs.settings.lj_last_used['scan_freq']))
+            self.lj_status_var.set('Channels:\n{}\n'
+                                   '\nScan Freq: [{}Hz]'.format(lj_ch_num, dirs.settings.lj_last_used['scan_freq']))
         elif lj_n_ch > 8:
             tkMb.showinfo('Warning!', 'Enabling photometry has increased the number of LabJack channels '
                                       'in use to {}; the maximum is 8. \n\n'
@@ -968,11 +1951,10 @@ class MasterGUI(object):
             dirs.settings.lj_last_used['ch_num'] = ch_num
             self.lj_config()
 
-    # Arduino Functions
+    # Arduino GUI Functions
+    #####################################################################
     def ard_config(self, types):
-        """
-        Presents the requested Arduino GUI
-        """
+        """Presents the requested Arduino GUI"""
         config = Tk.Toplevel(self.master)
         config_run = ArduinoGUI(config)
         if types == 'tone':
@@ -984,7 +1966,7 @@ class MasterGUI(object):
         config_run.run()
         # Now we load these settings
         # back into settings.ard_last_used
-        if not config_run.hard_stop:
+        if not config_run.hard_closed:
             data = config_run.return_data
             if config_run.types == 'tone':
                 dirs.settings.ard_last_used['packet'][4] = len(data)
@@ -1010,9 +1992,19 @@ class MasterGUI(object):
             self.ard_grab_data(destroy=True)
 
     def ard_get_time(self):
-        """
-        Gets total exp time from GUI input
-        """
+        """Gets total exp time from GUI input and uses it if if is >= max time
+        of all stimuli components"""
+        max_stim_time = []
+        for i in dirs.settings.ard_last_used['tone_pack']:
+            max_stim_time.append(i[2])
+        for i in dirs.settings.ard_last_used['out_pack']:
+            max_stim_time.append(i[1])
+        for i in dirs.settings.ard_last_used['pwm_pack']:
+            max_stim_time.append(i[3])
+        try:
+            max_stim_time = max(max_stim_time)
+        except ValueError:
+            max_stim_time = 0
         try:
             # Grab Inputs
             mins = int(self.min_entry.get().strip())
@@ -1026,6 +2018,17 @@ class MasterGUI(object):
             self.sec_entry.insert(Tk.END, '{:0>2}'.format(secs))
             # Update Vairbales
             self.ttl_time = (mins * 60 + secs) * 1000
+            if self.ttl_time < max_stim_time:
+                self.ttl_time = deepcopy(max_stim_time)
+                max_stim_time /= 1000
+                mins = max_stim_time // 60
+                secs = max_stim_time % 60
+                tkMb.showinfo('Error!', 'Total time cannot be less than '
+                                        '[{}:{}] because one of the stimuli segments'
+                                        ' exceeds this value. \n\n'
+                                        'Reconfigure your stimuli if you wish to'
+                                        ' reduce total '
+                                        'time further.'.format(mins, secs))
             dirs.settings.ard_last_used['packet'][3] = self.ttl_time
             self.ard_grab_data(destroy=True)
         except ValueError:
@@ -1034,27 +2037,23 @@ class MasterGUI(object):
                           parent=self.master)
 
     def ard_update_preset_list(self):
-        """
-        List of all Arduino Presets
-        """
+        """List of all Arduino Presets"""
         self.ard_preset_list = [i for i in dirs.settings.ard_presets]
 
     def ard_grab_data(self, destroy=False, load=False):
-        """
-        Obtain arduino data from saves
-        """
+        """Obtain arduino data from saves"""
         # If load is false, then we load from settings.frcl
         if load is not False:
             # Then load must be a preset name.
-            dirs.settings.ard_last_used = copy.deepcopy(dirs.settings.ard_presets[load])
+            dirs.settings.ard_last_used = deepcopy(dirs.settings.ard_presets[load])
             # Update Total Time Fields
             last_used_time = dirs.settings.ard_last_used['packet'][3] / 1000
             self.min_entry.delete(0, Tk.END)
             self.sec_entry.delete(0, Tk.END)
-            self.min_entry.insert(Tk.END, '{}'.format(min_from_sec(last_used_time,
-                                                                   option='min')))
-            self.sec_entry.insert(Tk.END, '{}'.format(min_from_sec(last_used_time,
-                                                                   option='sec')))
+            self.min_entry.insert(Tk.END, '{}'.format(format_secs(last_used_time,
+                                                                  option='min')))
+            self.sec_entry.insert(Tk.END, '{}'.format(format_secs(last_used_time,
+                                                                  option='sec')))
         if destroy:
             self.ard_canvas.delete(self.progress_shape)
             self.ard_canvas.delete(self.progress_text)
@@ -1071,10 +2070,8 @@ class MasterGUI(object):
             for i in self.pwm_bars:
                 self.balloon.tagunbind(self.ard_canvas, i)
                 self.ard_canvas.delete(i)
-        self.ard_data = ArduinoGUI(Tk.Toplevel())
-        self.ard_data.root.destroy()
-        divisor = 5 + 5 * int(self.ard_data.packet[3] / 300000)
-        segment = float(self.ard_data.packet[3] / 1000) / divisor
+        divisor = 5 + 5 * int(dirs.settings.ard_last_used['packet'][3] / 300000)
+        segment = float(dirs.settings.ard_last_used['packet'][3] / 1000) / divisor
         self.v_bars = [[]] * (1 + int(round(segment)))
         self.bar_times = [[]] * (1 + int(round(segment)))
         for i in range(int(round(segment))):
@@ -1093,7 +2090,7 @@ class MasterGUI(object):
                                                                       fill='white')
                     self.bar_times[i] = self.ard_canvas.create_text(i * (1000.0 / segment),
                                                                     self.ard_bckgrd_height + 8,
-                                                                    text=min_from_sec(divisor * i),
+                                                                    text=format_secs(divisor * i),
                                                                     fill='black',
                                                                     font=self.time_label_font)
                 if i == int(round(segment)) - 1 and (i + 1) % 2 == 0 and (i + 1) * (1000.0 / segment) <= 1001:
@@ -1111,7 +2108,7 @@ class MasterGUI(object):
                                                                               fill='white')
                     self.bar_times[i + 1] = self.ard_canvas.create_text((i + 1) * (1000.0 / segment),
                                                                         self.ard_bckgrd_height + 8,
-                                                                        text=min_from_sec(divisor * (i + 1)),
+                                                                        text=format_secs(divisor * (i + 1)),
                                                                         fill='black',
                                                                         font=self.time_label_font)
                 if i == int(round(segment)) - 1 and (i + 1) % 2 != 0 and (i + 1) * (1000.0 / segment) <= 1001:
@@ -1129,8 +2126,8 @@ class MasterGUI(object):
                                                                               fill='white')
         self.tone_data, self.out_data, self.pwm_data = -1, -1, -1
         self.tone_bars = []
-        if len(self.ard_data.tone_pack) != 0:
-            self.tone_data = self.ard_decode_data('tone', self.ard_data.tone_pack)
+        if len(dirs.settings.ard_last_used['tone_pack']) != 0:
+            self.tone_data = self.ard_decode_data('tone', dirs.settings.ard_last_used['tone_pack'])
             self.tone_bars = [[]] * len(self.tone_data)
             for i in range(len(self.tone_data)):
                 self.tone_bars[i] = self.ard_canvas.create_rectangle(self.tone_data[i][0],
@@ -1140,16 +2137,16 @@ class MasterGUI(object):
                 self.balloon.tagbind(self.ard_canvas,
                                      self.tone_bars[i],
                                      '{} - {}\n{} Hz'.format(
-                                         min_from_sec(
+                                         format_secs(
                                              self.tone_data[i][4] / 1000),
-                                         min_from_sec(
+                                         format_secs(
                                              self.tone_data[i][5] / 1000),
                                          self.tone_data[i][3]))
         self.out_bars = []
-        if len(self.ard_data.out_pack) != 0:
+        if len(dirs.settings.ard_last_used['out_pack']) != 0:
             pin_ids = range(2, 8)
             self.out_data = self.ard_decode_data('output',
-                                                 self.ard_data.out_pack)
+                                                 dirs.settings.ard_last_used['out_pack'])
             self.out_bars = [[]] * len(self.out_data)
             for i in range(len(self.out_data)):
                 y_pos = 35 + (pin_ids.index(self.out_data[i][3])) * 20
@@ -1161,16 +2158,16 @@ class MasterGUI(object):
                 self.balloon.tagbind(self.ard_canvas,
                                      self.out_bars[i],
                                      '{} - {}\nPin {}'.format(
-                                         min_from_sec(
+                                         format_secs(
                                              self.out_data[i][4] / 1000),
-                                         min_from_sec(
+                                         format_secs(
                                              self.out_data[i][5] / 1000),
                                          self.out_data[i][3]))
         self.pwm_bars = []
-        if len(self.ard_data.pwm_pack) != 0:
+        if len(dirs.settings.ard_last_used['pwm_pack']) != 0:
             pin_ids = range(8, 14)
             pin_ids.remove(10)
-            self.pwm_data = self.ard_decode_data('pwm', self.ard_data.pwm_pack)
+            self.pwm_data = self.ard_decode_data('pwm', dirs.settings.ard_last_used['pwm_pack'])
             self.pwm_bars = [[]] * len(self.pwm_data)
             for i in range(len(self.pwm_data)):
                 y_pos = 155 + (pin_ids.index(self.pwm_data[i][3])) * 20
@@ -1186,8 +2183,8 @@ class MasterGUI(object):
                                       'Freq: {}Hz\n'
                                       'Duty Cycle: {}%\n'
                                       'Phase Shift: {}' + u'\u00b0').format(
-                                         min_from_sec(self.pwm_data[i][7] / 1000),
-                                         min_from_sec(self.pwm_data[i][8] / 1000),
+                                         format_secs(self.pwm_data[i][7] / 1000),
+                                         format_secs(self.pwm_data[i][8] / 1000),
                                          self.pwm_data[i][3],
                                          self.pwm_data[i][4],
                                          self.pwm_data[i][5],
@@ -1198,19 +2195,16 @@ class MasterGUI(object):
         self.progress_text = self.ard_canvas.create_text(35, 0,
                                                          fill='white',
                                                          anchor=Tk.N)
-        self.progbar = ProgressBar(self.ard_canvas,
+        self.progbar = ProgressBar(self.master,
+                                   self.ard_canvas,
                                    self.progress_shape,
                                    self.progress_text,
-                                   self.ard_data.packet[3])
-        self.prog_on.config(command=self.progbar_run)
-        self.prog_off.config(state=Tk.DISABLED,
-                             command=self.progbar_stop)
+                                   dirs.settings.ard_last_used['packet'][3])
 
-    def ard_decode_data(self, name, data_source):
-        """
-        Read packed up Arduino Data and puts it in proper format
-        """
-        time_seg = float(self.ard_data.packet[3]) / 1000
+    @staticmethod
+    def ard_decode_data(name, data_source):
+        """Read packed up Arduino Data and puts it in proper format"""
+        time_seg = float(dirs.settings.ard_last_used['packet'][3]) / 1000
         if name == 'tone':
             start, on = 1, 2
         elif name == 'pwm':
@@ -1272,201 +2266,50 @@ class MasterGUI(object):
                                  i[on]])
         return ard_data
 
+    # THESE FUNCTIONS INTERACT WITH THREAD HANDLER THROUGH QUEUES
+    #####################################################################
+    # Running the Experiment
+    #####################################################################
     def progbar_run(self):
-        """
-        Check if valid settings, make directories, and start progress bar
-        """
+        """Check if valid settings, make directories, and start progress bar"""
         # Check folders are available
         if len(self.save_dir_list) == 0 and len(self.results_dir_used) == 0 and dirs.settings.save_dir == '':
             tkMb.showinfo('Error!',
                           'You must first create a directory to save data output.',
                           parent=self.master)
             return
-        # Check devices are available
-        #   first we setup Arduino...
-        if self.ard_toggle_var.get() == 1:
-            self.ard_ser = ArduinoComm(self.ard_queue)
-        # ... and LabJack
-        if self.lj_toggle_var.get() == 1:
-            if not self.lj_connected:
-                try:
-                    self.lj_device = LJU6(exp_lock=self.exp_lock,
-                                          read_lock=self.read_lock,
-                                          report_queue=self.lj_queue)
-                    self.lj_connected = True
-                except (LabJackPython.LabJackException, LabJackPython.NullHandleException):
-                    self.lj_status.set('** LabJack is not connected or '
-                                       'is occupied by another program. '
-                                       'Please reconnect the device.')
-                    return
-            self.lj_instance = LabJackComm(self.lj_queue, self.lj_device)
-        if self.cmr_toggle_var.get() == 1:
-            if not self.cmr_connected:
-                try:
-                    self.camera = FireFly(exp_lock=self.exp_lock,
-                                          report_queue=self.cmr_queue)
-                    self.cmr_connected = True
-                    self.cmr_status.set('Connected to Camera!')
-                except fc2.ApiError:
-                    self.cmr_status.set('** Camera is not connected or '
-                                        'is occupied by another program.'
-                                        ' Please disconnect and try again.')
-                    return
-        # Thread Queues
-        self.master_queue.queue.clear()
-        self.ard_queue.queue.clear()
-        self.lj_queue.queue.clear()
-        # Disable non-essential buttons to avoid errors between modules
-        self.run_bulk_toggle(running=True)
-        # Start devices
-        if self.ard_toggle_var.get() == 1:
-            self.ard_ser.start()
-        if self.lj_toggle_var.get() == 1:
-            self.lj_instance.start()
-        if self.cmr_toggle_var.get() == 1:
-            self.cmr_status.set('Ready')
-        # Process the queues from device threads to see if we succeeded in connecting
-        main_queue_success_msg = []
-        main_queue_fail_msg = []
-        if self.ard_toggle_var.get() == 1:
-            self.gui_queue_process(success_msg=[self.ard_ser.success_msg],
-                                   fail_msg=[self.ard_ser.fail_msg],
-                                   queue=self.ard_queue, rate=10,
-                                   header=self.ard_ser.msg_header,
-                                   header_var=self.ard_status)
-            main_queue_success_msg.append(self.ard_ser.success_msg)
-            main_queue_fail_msg.append(self.ard_ser.fail_msg)
-        if self.lj_toggle_var.get() == 1:
-            self.gui_queue_process(success_msg=[self.lj_instance.success_msg],
-                                   fail_msg=[self.lj_instance.fail_msg],
-                                   queue=self.lj_queue, rate=10,
-                                   header=self.lj_instance.msg_header,
-                                   header_var=self.lj_status)
-            main_queue_success_msg.append(self.lj_instance.success_msg)
-            main_queue_fail_msg.append(self.lj_instance.fail_msg)
-        # Main queue processing
-        self.gui_queue_process(success_msg=main_queue_success_msg,
-                               fail_msg=main_queue_fail_msg,
-                               success_fn=self.run_experiment,
-                               fail_fn=lambda: self.run_bulk_toggle(running=False),
-                               queue=self.master_queue, rate=15)
-
-    def progbar_stop(self):
-        """
-        Stops the progress bar
-        """
-        self.ard_queue.put('FailedArd')
-        self.lj_queue.put('FailedLJ')
-        self.progbar.stop()
-        self.run_bulk_toggle(running=False)
-        if self.ard_toggle_var.get() == 1:
-            try:
-                self.ard_ser.reset()
-            except AttributeError:
-                pass
-            self.ard_status.set('Terminated')
-        if self.lj_toggle_var.get() == 1:
-            self.lj_device.running = False
-            self.lj_status.set('Terminated')
-        if self.cmr_toggle_var.get() == 1:
-            self.camera.running = False
-            self.cmr_status.set('Terminated')
-
-    # Experiment Run Functions
-    def run_experiment(self):
-        """
-        If we succeed in connecting to our devices, do this
-        """
-        # 1. Make sure there is somewhere to save our file outputs
+        # Make sure we actually have a place to save files:
         if len(self.results_dir_used) == 0:
             self.preresults_dir = str(dirs.main_save_dir) + dirs.settings.save_dir + '/'
-            dirs.results_dir = self.preresults_dir + '{} at [{}]/'.format(get_day(2),
-                                                                          get_day(3))
+            dirs.results_dir = self.preresults_dir + '{}/'.format(format_daytime('daytime'))
             self.make_save_dir = 1
-            self.save_file_name.set('Currently Selected:\n[{}]'.format(
-                limit_string_length(
-                    dirs.settings.save_dir.upper(),
-                    20)))
+            self.save_status_var.set('Currently Selected:\n[{}]'.format(
+                lim_str_len(dirs.settings.save_dir.upper(), 30)))
         if self.make_save_dir == 1 or not os.path.isdir(dirs.results_dir):
             os.makedirs(dirs.results_dir)
             self.results_dir_used[self.preresults_dir] = dirs.results_dir
             self.make_save_dir = 0
             self.save_grab_list()
-        # 2. Pack up and send over data to the arduino
-        system_time = ["<L", calendar.timegm(time.gmtime()) - TIME_OFFSET]
-        pwm_pack_send = []
-        for i in dirs.settings.ard_last_used['pwm_pack']:
-            period = (float(1000000) / float(i[4]))
-            cycleTimeOn = long(round(period * (float(i[7]) / float(100))))
-            cycleTimeOff = long(round(period * (float(1) - (float(i[7]) / float(100)))))
-            timePhaseShift = long(round(period * (float(i[6]) / float(360))))
-            pwm_pack_send.append(["<LLLLLBL",
-                                  0, i[2], i[3],
-                                  cycleTimeOn, cycleTimeOff,
-                                  i[5], timePhaseShift])
-        try:
-            if self.ard_toggle_var.get() == 1:
-                self.ard_status.set('Success! Connected to '
-                                    'Port [{}]. '
-                                    'Sending data '
-                                    'packets...'.format(self.ard_ser.ser_port))
-                self.ard_ser.send_packets([system_time],
-                                          [dirs.settings.ard_last_used['packet']],
-                                          dirs.settings.ard_last_used['tone_pack'],
-                                          dirs.settings.ard_last_used['out_pack'],
-                                          pwm_pack_send)
-                self.ard_status.set('Success! Connected to '
-                                    'Port [{}]. '
-                                    'Data packets sent'.format(self.ard_ser.ser_port))
-            # 3. run threads
-            if self.lj_toggle_var.get() == 1:
-                lj_stream = threading.Thread(target=self.lj_device.read_stream_data)
-                lj_stream.daemon = True
-                lj_write = threading.Thread(target=self.lj_device.data_write_plot)
-                lj_write.daemon = True
-                self.time1 = datetime.now()
-                lj_stream.start()
-                lj_write.start()
-                self.gui_queue_process(queue=self.lj_queue, success_msg=['none'], fail_msg=['none'],
-                                       header='<ljmsg>', header_var=self.lj_status)
-            if self.cmr_toggle_var.get() == 1:
-                # self.camera.get_temp_img = False
-                camera_rec = threading.Thread(target=self.camera.run)
-                camera_rec.daemon = True
-                camera_rec.start()
-                self.gui_queue_process(queue=self.cmr_queue, success_msg=['none'], fail_msg=['none'],
-                                       header='<cmrmsg>', header_var=self.cmr_status)
-            if self.ard_toggle_var.get() == 1:
-                # pre-exp delay is only 0.5s; no need for a sep thread.
-                # just deal with the gui freeze
-                threading.Thread(target=self.exp_start_listener).start()
-                self.gui_queue_process(queue=self.ard_queue, success_msg=['SuccessExp'], fail_msg=['none'],
-                                       header='<expmsg>',
-                                       header_var=self.ard_status, success_fn='RunProg>>')
-        except serial.serialutil.SerialException:
-            self.ard_status.set('** Arduino was disconnected! '
-                                'Reconnect the device and try again.')
+        # Run
+        self.save_status_bar.set('Started.')
+        self.instructions_queue.put_nowait('<run>')
+        self.run_bulk_toggle(running=True)
 
-    def exp_start_listener(self):
-        """Listens for lock status from labjack thread and triggers
-        arduino and progbar"""
-        self.exp_lock.wait()
-        self.ard_ser.send_to_ard(pack("<B", 1))
-        self.ard_queue.put_nowait('<expmsg>Started Procedure.')
-        self.ard_queue.put_nowait('SuccessExp')
+    def progbar_stop(self):
+        """performs a hard stop on the experiment"""
+        self.instructions_queue.put_nowait('<hardstop>')
+        self.progbar.stop()
 
     def run_bulk_toggle(self, running):
-        """
-        Toggles all non-essential buttons to active
-         or disabled based on running state
-        """
+        """Toggles all non-essential buttons to active
+        or disabled based on running state"""
         if running:
             self.master.protocol('WM_DELETE_WINDOW',
                                  lambda: self.hard_exit(allow=False))
             self.prog_off.config(state=Tk.NORMAL)
             self.prog_on.config(state=Tk.DISABLED)
-            self.fp_checkbutton.config(state=Tk.DISABLED)
-            self.start_gui_button.config(state=Tk.DISABLED)
+            self.fp_toggle_button.config(state=Tk.DISABLED)
+            self.fp_config_button.config(state=Tk.DISABLED)
             self.save_dir_menu.config(state=Tk.DISABLED)
             self.new_save_entry.config(state=Tk.DISABLED)
             self.new_save_button.config(state=Tk.DISABLED)
@@ -1476,22 +2319,21 @@ class MasterGUI(object):
             self.ard_preset_menu.config(state=Tk.DISABLED)
             self.min_entry.config(state=Tk.DISABLED)
             self.sec_entry.config(state=Tk.DISABLED)
-            self.ard_time_confirm.config(state=Tk.DISABLED)
-            self.tone_setup.config(state=Tk.DISABLED)
-            self.out_setup.config(state=Tk.DISABLED)
-            self.pwm_setup.config(state=Tk.DISABLED)
+            self.ard_time_confirm_button.config(state=Tk.DISABLED)
+            self.tone_setup_button.config(state=Tk.DISABLED)
+            self.out_setup_button.config(state=Tk.DISABLED)
+            self.pwm_setup_button.config(state=Tk.DISABLED)
             self.ard_toggle_button.config(state=Tk.DISABLED)
             self.lj_toggle_button.config(state=Tk.DISABLED)
-            if ENABLE_CAMERA:
-                self.cmr_toggle_button.config(state=Tk.DISABLED)
+            self.cmr_toggle_button.config(state=Tk.DISABLED)
         if not running:
             self.master.protocol('WM_DELETE_WINDOW',
                                  self.hard_exit)
             self.prog_off.config(state=Tk.DISABLED)
             self.prog_on.config(state=Tk.NORMAL)
-            self.fp_checkbutton.config(state=Tk.NORMAL)
-            if self.fp_bool.get() == 1:
-                self.start_gui_button.config(state=Tk.NORMAL)
+            self.fp_toggle_button.config(state=Tk.NORMAL)
+            if self.fp_toggle_var.get() == 1:
+                self.fp_config_button.config(state=Tk.NORMAL)
             self.save_dir_menu.config(state=Tk.NORMAL)
             self.new_save_entry.config(state=Tk.NORMAL)
             self.new_save_button.config(state=Tk.NORMAL)
@@ -1501,1483 +2343,341 @@ class MasterGUI(object):
             self.ard_preset_menu.config(state=Tk.NORMAL)
             self.min_entry.config(state=Tk.NORMAL)
             self.sec_entry.config(state=Tk.NORMAL)
-            self.ard_time_confirm.config(state=Tk.NORMAL)
-            self.tone_setup.config(state=Tk.NORMAL)
-            self.out_setup.config(state=Tk.NORMAL)
-            self.pwm_setup.config(state=Tk.NORMAL)
+            self.ard_time_confirm_button.config(state=Tk.NORMAL)
+            self.tone_setup_button.config(state=Tk.NORMAL)
+            self.out_setup_button.config(state=Tk.NORMAL)
+            self.pwm_setup_button.config(state=Tk.NORMAL)
             self.ard_toggle_button.config(state=Tk.NORMAL)
             self.lj_toggle_button.config(state=Tk.NORMAL)
-            if ENABLE_CAMERA:
-                self.cmr_toggle_button.config(state=Tk.NORMAL)
-
-
-class ScrollFrame(object):
-    """
-    Produces a scrollable canvas item
-    """
-
-    def __init__(self, master, num_args, rows, bottom_padding=0):
-        self.rows = rows
-        self.root = master
-        self.num_args = num_args
-        self.bottom_padding = bottom_padding
-        # Top Frame
-        self.top_frame = Tk.Frame(self.root)
-        self.top_frame.grid(row=0, column=0,
-                            columnspan=self.num_args,
-                            sticky=Tk.N + Tk.S + Tk.E + Tk.W)
-        # Scroll Bar
-        v_bar = Tk.Scrollbar(self.root, orient=Tk.VERTICAL)
-        self.canvas = Tk.Canvas(self.root, yscrollcommand=v_bar.set)
-        v_bar['command'] = self.canvas.yview
-        self.canvas.bind_all('<MouseWheel>', self.on_vertical)
-        v_bar.grid(row=1, column=self.num_args, sticky=Tk.N + Tk.S)
-        self.root.grid_columnconfigure(0, weight=1)
-        self.root.grid_rowconfigure(0, weight=1)
-        # Middle Frame
-        self.middle_frame = Tk.Frame(self.canvas)
-        # Bottom Frame
-        self.bottom_frame = Tk.Frame(self.root)
-        self.bottom_frame.grid(row=2, column=0, columnspan=self.num_args + 1)
-
-    def on_vertical(self, event):
-        """
-        :return:
-         vertical position of scrollbar
-        """
-        self.canvas.yview_scroll(-1 * event.delta, 'units')
-
-    def finalize(self):
-        """
-        finishes scrollbar setup
-        """
-        self.canvas.create_window(0, 0, anchor=Tk.NW, window=self.middle_frame)
-        self.canvas.grid(row=1, column=0,
-                         columnspan=self.num_args, sticky=Tk.N + Tk.S + Tk.E + Tk.W)
-        self.canvas.configure(scrollregion=(0, 0, 0, self.rows * 28 + self.bottom_padding))
-
-
-class GUI(object):
-    """
-    Standard GUI Class for all GUIs to inherit from
-    """
-
-    def __init__(self, master):
-        self.root = master
-        # noinspection PyUnresolvedReferences
-        self.root.title(self.title)
-        self.root.resizable(width=False, height=False)
-        self.ALL = Tk.N + Tk.E + Tk.S + Tk.W
-        self.hard_stop = False
-        self.root.protocol('WM_DELETE_WINDOW', self.hard_exit)
-        self.root.wm_attributes("-topmost", 1)
-
-    def hard_exit(self):
-        """
-        Destroy all instances of the window
-        if close button is pressed
-        Prevents ID errors and clashes
-        """
-        self.hard_stop = True
-        self.root.destroy()
-        self.root.quit()
-
-    def center(self):
-        """
-        Centers GUI window
-        :return:
-            None
-        """
-        self.root.update_idletasks()
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        [window_width, window_height] = list(
-            int(i) for i in
-            self.root.geometry().split('+')[0].split('x'))
-        x_pos = screen_width / 2 - window_width / 2
-        y_pos = screen_height / 2 - window_height / 2
-        self.root.geometry('{}x{}+{}+{}'.format(
-            window_width,
-            window_height,
-            x_pos, y_pos))
-
-    def run(self):
-        """
-        Initiate GUI
-        :return:
-            None
-        """
-        self.center()
-        self.root.mainloop()
-
-    @staticmethod
-    def platform_geometry(windows, darwin):
-        """
-        Returns window dimensions based on platform
-        """
-        if sys.platform.startswith('win'):
-            return windows
-        elif sys.platform.startswith('darwin'):
-            return darwin
-        else:
-            return False
-
-    @staticmethod
-    def create_tk_vars(types, num):
-        """
-        Turns input array into Tkinter Variables
-        :param types: (Str) 'Int' or 'String'
-        :param num: (Int) Number of Tk variables to return
-        :return:
-            List populated with Tkinter variables of the desired type
-        """
-        hold = []
-        if types == 'Int':
-            for i in range(num):
-                hold.append(Tk.IntVar())
-        elif types == 'String':
-            for i in range(num):
-                hold.append(Tk.StringVar())
-        return hold
-
-
-class PhotometryGUI(GUI):
-    """
-    GUI for Configuring Photometry Options
-    *Does not affect actual program function
-        - When saving file outputs, photometry config options
-          are appended to aid in Lock-In Analysis
-    Options appended: - Channels Used and associated Data column
-                      - Sample stimulation frequencies (primary and isosbestic)
-    """
-
-    def __init__(self, master):
-        self.title = 'Photometry Configuration'
-        GUI.__init__(self, master)
-        # Grab last used settings
-        self.ch_num = dirs.settings.fp_last_used['ch_num']
-        self.stim_freq = {'main': dirs.settings.fp_last_used['main_freq'],
-                          'isos': dirs.settings.fp_last_used['isos_freq']}
-        # Check Buttons
-        self.chk_buttons = self.create_tk_vars('Int', 3)
-        for i in range(len(self.chk_buttons)):
-            self.chk_buttons[i].set(self.ch_num[i])
-        Tk.Label(self.root,
-                 text='\nPrevious Settings Loaded\n'
-                      'These settings will be saved in your .csv outputs.\n',
-                 relief=Tk.RAISED).pack(fill='both', expand='yes')
-        data_frame = Tk.LabelFrame(self.root,
-                                   text='Photometry Data Channel')
-        true_frame = Tk.LabelFrame(self.root,
-                                   text='Main Reference Channel')
-        isos_frame = Tk.LabelFrame(self.root,
-                                   text='Isosbestic Reference Channel')
-        button_frames = [data_frame, true_frame, isos_frame]
-        buttons = []
-        for i in range(len(button_frames)):
-            buttons.append(copy.deepcopy([[]] * NUM_LJ_CH))
-        for frame_index in range(len(button_frames)):
-            button_frames[frame_index].pack(fill='both', expand='yes')
-            for i in range(NUM_LJ_CH):
-                buttons[frame_index][i] = Tk.Radiobutton(
-                    button_frames[frame_index],
-                    text=str(i), value=i,
-                    variable=self.chk_buttons[frame_index],
-                    command=lambda (var, ind)=(self.chk_buttons[frame_index],
-                                               frame_index):
-                    self.select_button(var, ind))
-                buttons[frame_index][i].pack(side=Tk.LEFT)
-        # Entry Fields
-        freq_frame = Tk.LabelFrame(self.root,
-                                   text='Primary and Isosbestic '
-                                        'Stimulation Frequencies')
-        freq_frame.pack(fill='both', expand='yes')
-        Tk.Label(freq_frame, text='Main Frequency: ').pack(side=Tk.LEFT)
-        self.main_entry = Tk.Entry(freq_frame)
-        self.main_entry.pack(side=Tk.LEFT)
-        self.isos_entry = Tk.Entry(freq_frame)
-        self.isos_entry.pack(side=Tk.RIGHT)
-        Tk.Label(freq_frame, text='Isosbestic Frequency: ').pack(side=Tk.RIGHT)
-        self.main_entry.insert(Tk.END, '{}'.format(str(self.stim_freq['main'])))
-        self.isos_entry.insert(Tk.END, '{}'.format(str(self.stim_freq['isos'])))
-        # Exit Button
-        Tk.Button(self.root, text='FINISH', command=self.exit).pack(side=Tk.BOTTOM)
-
-    def select_button(self, var, ind):
-        """
-        Changes button variables when user selects an option
-        :param var: Button variable
-        :param ind: Button index
-        :return:
-            None
-        """
-        if var.get() not in self.ch_num:
-            self.ch_num[ind] = var.get()
-        else:
-            temp_report = ['Photometry Data Channel',
-                           'Main Reference Channel',
-                           'Isosbestic Reference Channel']
-            temp_report = temp_report[self.ch_num.index(var.get())]
-            tkMb.showinfo('Error!',
-                          'You already selected \n['
-                          'Channel {}] \n'
-                          'for \n'
-                          '[{}]!'.format(var.get(), temp_report),
-                          parent=self.root)
-            self.chk_buttons[ind].set(self.ch_num[ind])
-
-    def exit(self):
-        """
-        Quit Photometry
-        :return:
-            None
-        """
-        try:
-            true_freq = int(self.main_entry.get().strip())
-            isos_freq = int(self.isos_entry.get().strip())
-            if true_freq == 0 or isos_freq == 0:
-                tkMb.showinfo('Error!', 'Stimulation Frequencies '
-                                        'must be higher than 0 Hz!',
-                              parent=self.root)
-            elif true_freq == isos_freq:
-                tkMb.showinfo('Error!', 'Main sample and Isosbestic Frequencies '
-                                        'should not be the same value.',
-                              parent=self.root)
-            else:
-                self.stim_freq = {'main': true_freq,
-                                  'isos': isos_freq}
-                self.root.destroy()
-                dirs.settings.fp_last_used = {
-                    'ch_num': self.ch_num,
-                    'main_freq': self.stim_freq['main'],
-                    'isos_freq': self.stim_freq['isos']}
-                self.root.quit()
-        except ValueError:
-            tkMb.showinfo('Error!', 'Stimulation frequencies must be '
-                                    'Integers in Hz.',
-                          parent=self.root)
-
-
-class LabJackGUI(GUI):
-    """
-    GUI for LabJack configuration
-    """
-
-    def __init__(self, master):
-        self.lj_save_name = ''
-        self.ch_num = dirs.settings.lj_last_used['ch_num']
-        self.scan_freq = dirs.settings.lj_last_used['scan_freq']
-        self.n_ch = len(self.ch_num)
-        self.title = 'LabJack Configuration'
-        GUI.__init__(self, master)
-        ##############################
-        # Load preset list
-        self.preset_list = []
-        self.update_preset_list()
-        # Create frames
-        left_frame = Tk.LabelFrame(self.root, text='Manual Configuration')
-        left_frame.grid(row=0, column=0)
-        right_frame = Tk.LabelFrame(self.root, text='Preset Configuration')
-        right_frame.grid(row=0, column=1)
-        # Load Presets
-        Tk.Label(right_frame, text='\nChoose a Preset'
-                                   '\nOr Save a '
-                                   'New Preset:').pack(fill='both',
-                                                       expand='yes')
-        preset_frame = Tk.LabelFrame(right_frame, text='Select a Saved Preset')
-        preset_frame.pack(fill='both', expand='yes')
-        self.preset_chosen = Tk.StringVar()
-        self.preset_chosen.set(max(self.preset_list, key=len))
-        self.preset_menu = Tk.OptionMenu(preset_frame, self.preset_chosen,
-                                         *self.preset_list,
-                                         command=self.list_choose)
-        self.preset_menu.pack(side=Tk.TOP)
-        # Save New Presets
-        new_preset_frame = Tk.LabelFrame(right_frame, text='(Optional): '
-                                                           'Save New Preset')
-        new_preset_frame.pack(fill='both', expand='yes')
-        self.save_entry = Tk.Entry(new_preset_frame)
-        self.save_entry.pack()
-        Tk.Button(new_preset_frame, text='SAVE',
-                  command=self.save_button).pack()
-        ##############################
-        # Manual Config
-        Tk.Label(left_frame, text='\nMost Recently '
-                                  'Used Settings:').pack(fill='both',
-                                                         expand='yes')
-        ch_frame = Tk.LabelFrame(left_frame, text='Channels Selected')
-        ch_frame.pack(fill='both', expand='yes')
-        # Create Check Buttons
-        self.button_vars = self.create_tk_vars('Int', NUM_LJ_CH)
-        buttons = copy.deepcopy([[]] * NUM_LJ_CH)
-        for i in range(NUM_LJ_CH):
-            buttons[i] = Tk.Checkbutton(ch_frame, text='{:0>2}'.format(i),
-                                        variable=self.button_vars[i],
-                                        onvalue=1, offvalue=0,
-                                        command=self.select_button)
-        for i in range(NUM_LJ_CH):
-            buttons[i].grid(row=i // 5, column=i - (i // 5) * 5)
-        for i in self.ch_num:
-            buttons[i].select()
-        # Sampling Frequency Field
-        scan_frame = Tk.LabelFrame(left_frame, text='Scan Frequency')
-        scan_frame.pack(fill='both', expand='yes')
-        Tk.Label(scan_frame, text='Freq/Channel (Hz):').pack(side=Tk.LEFT)
-        self.scan_entry = Tk.Entry(scan_frame, width=8)
-        self.scan_entry.pack(side=Tk.LEFT)
-        self.scan_entry.insert(Tk.END, self.scan_freq)
-        # Exit Button
-        Tk.Button(self.root,
-                  text='FINISH',
-                  command=self.exit).grid(row=1, column=0, columnspan=2)
-
-    def update_preset_list(self):
-        """
-        Updates self.preset_list with all available presets
-        :return:
-            None
-        """
-        self.preset_list = [i for i in dirs.settings.lj_presets]
-
-    def select_button(self):
-        """
-        Inputs user selections on check buttons
-        :return:
-            None
-        """
-        redo = 0
-        temp_ch_num = self.ch_num
-        self.ch_num = []
-        for i in range(NUM_LJ_CH):
-            if self.button_vars[i].get() == 1:
-                self.ch_num.append(i)
-        self.n_ch = len(self.ch_num)
-        if self.n_ch > 8:
-            tkMb.showinfo('Error!',
-                          'You cannot use more than 8 LabJack '
-                          'Channels at once.',
-                          parent=self.root)
-            redo = 1
-        elif self.n_ch == 0:
-            tkMb.showinfo('Error!',
-                          'You must configure at least one '
-                          'Channel.',
-                          parent=self.root)
-            redo = 1
-        if redo == 1:
-            self.ch_num = temp_ch_num
-            for i in range(NUM_LJ_CH):
-                self.button_vars[i].set(0)
-            for i in self.ch_num:
-                self.button_vars[i].set(1)
-            self.n_ch = len(self.ch_num)
-
-    def save_button(self):
-        """
-        Saves and exits GUI
-        :return:
-            None
-        """
-        self.update_preset_list()
-        validity = self.check_input_validity()
-        if validity:
-            save_name = self.save_entry.get().strip().lower()
-            if len(save_name) == 0:
-                tkMb.showinfo('Error!',
-                              'You must give your Preset a name.',
-                              parent=self.root)
-            elif len(save_name) != 0:
-                if save_name not in dirs.settings.lj_presets:
-                    dirs.settings.lj_presets[save_name] = {
-                        'ch_num': self.ch_num,
-                        'scan_freq': self.scan_freq
-                    }
-                    tkMb.showinfo('Saved!', 'Preset saved as '
-                                            '[{}]'.format(save_name),
-                                  parent=self.root)
-                    menu = self.preset_menu.children['menu']
-                    menu.add_command(label=save_name,
-                                     command=lambda name=save_name:
-                                     self.list_choose(name))
-                    self.preset_chosen.set(save_name)
-                elif save_name in dirs.settings.lj_presets:
-                    if tkMb.askyesno('Overwrite?',
-                                     '[{}] already exists.\n'
-                                     'Overwrite this preset?'.format(save_name),
-                                     parent=self.root):
-                        dirs.settings.lj_presets[save_name] = {
-                            'ch_num': self.ch_num,
-                            'scan_freq': self.scan_freq
-                        }
-                        tkMb.showinfo('Saved!', 'Preset saved as '
-                                                '[{}]'.format(save_name),
-                                      parent=self.root)
-
-    def exit(self):
-        """
-        Close GUI
-        :return:
-            None
-        """
-        validity = self.check_input_validity()
-        if validity:
-            self.root.destroy()
-            self.root.quit()
-
-    def check_input_validity(self):
-        """
-        Checks if user inputs are valid
-        :return:
-            Validity (boolean)
-        """
-        validity = False
-        button_state = []
-        for i in self.button_vars:
-            button_state.append(i.get())
-        if 1 not in button_state:
-            tkMb.showinfo('Error!',
-                          'You must pick at least one LabJack '
-                          'Channel to Record from.',
-                          parent=self.root)
-        else:
-            try:
-                self.scan_freq = int(self.scan_entry.get())
-                max_freq = int(50000 / self.n_ch)
-                if self.scan_freq == 0:
-                    tkMb.showinfo('Error!',
-                                  'Scan Frequency must be higher than 0 Hz.',
-                                  parent=self.root)
-                elif self.scan_freq > max_freq:
-                    tkMb.showinfo('Error!',
-                                  'SCAN FREQUENCY x NUMBER OF CHANNELS \n'
-                                  'must be lower than [50,000Hz]\n\n'
-                                  'Max [{} Hz] right now with [{}] Channels '
-                                  'in use.'.format(max_freq, self.n_ch),
-                                  parent=self.root)
-                else:
-                    validity = True
-                    dirs.settings.lj_last_used['ch_num'] = self.ch_num
-                    dirs.settings.lj_last_used['scan_freq'] = self.scan_freq
-            except ValueError:
-                tkMb.showinfo('Error!', 'Scan Frequency must be an '
-                                        'Integer in Hz.',
-                              parent=self.root)
-        return validity
-
-    def list_choose(self, name):
-        """
-        Configures settings based on preset chosen
-        :param name: name of preset picked
-        :return:
-            None
-        """
-        self.preset_chosen.set(name)
-        self.ch_num = dirs.settings.lj_presets[name]['ch_num']
-        self.scan_freq = dirs.settings.lj_presets[name]['scan_freq']
-        for i in range(NUM_LJ_CH):
-            self.button_vars[i].set(0)
-        for i in self.ch_num:
-            self.button_vars[i].set(1)
-        self.n_ch = len(self.ch_num)
-        self.scan_entry.delete(0, Tk.END)
-        self.scan_entry.insert(Tk.END, self.scan_freq)
-
-
-# noinspection PyAttributeOutsideInit,PyUnresolvedReferences,PyTypeChecker,PyStatementEffect,PyUnboundLocalVariable
-class ArduinoGUI(GUI):
-    """
-    Handles user facing end of arduino communication
-    then passes input information to ArduinoComm
-    """
-
-    def __init__(self, master):
-        self.root = master
-        self.close_gui = False
-        self.title = 'n/a'
-        GUI.__init__(self, master)
-        self.num_entries = 0
-        self.output_ids, self.pwm_ids = (range(2, 8), range(8, 14))
-        self.pwm_ids.remove(10)
-        # Pull last used settings
-        [self.packet, self.tone_pack,
-         self.out_pack, self.pwm_pack] = dirs.settings.quick_ard()
-        self.max_time = 0
-        self.data = {'starts': {}, 'middles': {}, 'ends': {}, 'hold': {}}
-        self.types = None
-        self.return_data = []
-        self.fields_validated = {}
-
-    def entry_validate(self, pins=False, rows=None):
-        """
-        Checks inputs are valid and exits
-        """
-        entry, err_place_msg, arg_types = None, '', []
-        row = int(rows)
-        pin = None
-        if pins:
-            pin = int(pins)
-        # If we request a close via confirm button, we do a final check
-        close_gui = self.close_gui
-        if self.close_gui:
-            # set to False so if check fails we don't get stuck in a loop
-            self.close_gui = False
-        pin_ids = 0
-        ####################################################################
-        if self.types == 'tone':
-            pin_ids = 10
-            entry = self.entries[row]
-            arg_types = ['Time On (s)', 'Time until Off (s)', 'Frequency (Hz)']
-            err_place_msg = 'row [{:0>2}]'.format(row + 1)
-        elif self.types == 'output':
-            pin_ids = range(2, 8)
-            pin_ids = pin_ids[pin]
-            entry = self.entries[pin][row]
-            arg_types = ['Time On (s)', 'Time until Off (s)']
-            err_place_msg = 'row [{:0>2}], pin [{:0>2}]'.format(row + 1, pin_ids)
-        elif self.types == 'pwm':
-            pin_ids = range(8, 14)
-            pin_ids.remove(10)
-            pin_ids = pin_ids[pin]
-            entry = self.entries[pin][row]
-            arg_types = ['Time On (s)', 'Time until Off (s)', 'Frequency (Hz)',
-                         'Duty Cycle (%)', 'Phase Shift (deg)']
-            err_place_msg = 'row [{:0>2}], pin [{:0>2}]'.format(row + 1, pin_ids)
-        ####################################################################
-        # Grab comma separated user inputs as a list
-        inputs = entry.get().split(',')
-        for i in range(len(inputs)):
-            inputs[i] = inputs[i].strip()
-        # Now we begin to check entry validity
-        # 1. Check Commas don't occur at ends or there exist any doubles:
-        while True:
-            time.sleep(0.0001)
-            if '' in inputs:
-                inputs.pop(inputs.index(''))
-            else:
-                break
-        # 2. Check we have correct number of input arguments
-        num_args = len(arg_types)
-        error_str = ''
-        for i in range(num_args):
-            if i == 2:
-                error_str += '\n'
-            error_str += str(arg_types[i])
-            if i < num_args - 1:
-                error_str += ', '
-        # 2a. More than 0 but not num_args
-        if len(inputs) != num_args and len(inputs) > 0:
-            tkMb.showinfo('Error!',
-                          'Error in {}:\n'
-                          'Setup requires [{}] arguments for each entry.\n\n'
-                          'Comma separated in this order:\n\n'
-                          '[{}]'.format(err_place_msg, num_args, error_str),
-                          parent=self.root)
-            entry.focus()
-            return False
-        # 2b. Exactly 0
-        if len(inputs) == 0:
-            if close_gui:
-                self.close()
-            return False
-        # 3. Check input content are valid
-        try:
-            on, off = int(inputs[0]), int(inputs[1])
-            on_ms, off_ms = on * 1000, off * 1000
-            refr, freq, phase, duty_cycle = [], 0, 0, 0
-            if self.types == 'tone':
-                freq = int(inputs[2])
-                refr = freq
-            elif self.types == 'output':
-                refr = pin_ids
-            elif self.types == 'pwm':
-                freq = int(inputs[2])
-                duty_cycle = int(inputs[3])
-                phase = int(inputs[4])
-                refr = long('{:0>5}{:0>5}{:0>5}'.format(freq, duty_cycle, phase))
-            # 3a. If on+off > main gui max time, we change gui time at close
-            if (on_ms + off_ms) > self.max_time and off_ms != 0:
-                self.max_time = on_ms + off_ms
-            # 3b. Time interval for each entry must be > 0
-            if off_ms == 0:
-                tkMb.showinfo('Error!',
-                              'Error in {}:\n\n'
-                              'Time Interval (i.e. '
-                              'Time until On) '
-                              'cannot be 0s!'.format(err_place_msg),
-                              parent=self.root)
-                entry.focus()
-                return False
-            # 3c. Type specific checks
-            if self.types == 'tone':
-                if freq < 50:
-                    tkMb.showinfo('Error!',
-                                  'Error in {}:\n\n'
-                                  'The TONE function works '
-                                  'best for high frequencies.\n\n'
-                                  'Use the PWM function '
-                                  'instead for low Hz '
-                                  'frequency modulation'.format(err_place_msg),
-                                  parent=self.root)
-                    entry.focus()
-                    return False
-            if self.types == 'pwm':
-                if phase not in range(361):
-                    tkMb.showinfo('Error!',
-                                  'Error in {}:\n\n'
-                                  'Phase Shift must be an integer\n'
-                                  'between 0 and 360 degrees.'.format(err_place_msg),
-                                  parent=self.root)
-                    entry.focus()
-                    return False
-                if duty_cycle not in range(1, 100):
-                    tkMb.showinfo('Error!',
-                                  'Error in {}:\n\n'
-                                  'Duty Cycle must '
-                                  'be an integer '
-                                  'percentage between '
-                                  '1 and 99 inclusive.'.format(err_place_msg),
-                                  parent=self.root)
-                    entry.focus()
-                    return False
-                if freq > 100:
-                    tkMb.showinfo('Error!',
-                                  'Error in {}:\n\n'
-                                  'The PWM function works best'
-                                  'for frequencies <= 100 Hz.\n\n'
-                                  'Use the TONE function or an'
-                                  'external wave '
-                                  'generator instead.'.format(err_place_msg),
-                                  parent=self.root)
-                    entry.focus()
-                    return False
-        except ValueError:
-            tkMb.showinfo('Error!',
-                          'Error in {}:\n\n'
-                          'Input arguments '
-                          'must be comma '
-                          'separated integers'.format(err_place_msg),
-                          parent=self.root)
-            entry.focus()
-            return False
-        # 4. Check if any time intervals overlap
-        #       Rules:
-        #       - Time intervals cannot overlap for the same pin
-        #       - Time intervals next to each other
-        #         at the same [refr] will be joined into a single segment
-        #         to save space on arduino
-        #       Therefore:
-        #       - OUTPUT Pins can always overlap. We just need to combine the time inputs
-        #       - PWM Pins can overlap iff same [refr]; else raise error
-        #       - Tone is one pin only. Only overlap if same [freq]
-        #
-        # ...because pwm is a special butterfly and needs extra steps:
-        if self.types == 'pwm':
-            pin_int = pin_to_int(pin_ids)
-            (starts_l, middles_l, ends_l, hold_l) = (self.data['starts'],
-                                                     self.data['middles'],
-                                                     self.data['ends'],
-                                                     self.data['hold'])
-            try:
-                starts_l[pin_ids], middles_l[pin_ids], ends_l[pin_ids], hold_l[pin_int]
-            except KeyError:
-                (starts_l[pin_ids], middles_l[pin_ids],
-                 ends_l[pin_ids], hold_l[pin_int]) = {}, {}, {}, {}
-            (self.data['starts'], self.data['middles'],
-             self.data['ends'], self.data['hold']) = (starts_l[pin_ids], middles_l[pin_ids],
-                                                      ends_l[pin_ids], hold_l[pin_int])
-        # 4a.
-        # Before we validate entries further:
-        # If the validation is performed on a field that already had data validated
-        # e.g. due to edits
-        # we will need to remove its previous set of data first.
-        self.time_remove(rows, pins, refr)
-        # 4b. test for time overlaps
-        try:
-            self.data['starts'][refr], self.data['middles'][refr], self.data['ends'][refr]
-        except KeyError:
-            self.data['starts'][refr], self.data['middles'][refr], self.data['ends'][refr] = [], [], []
-        if self.types in ['tone', 'pwm']:
-            try:
-                self.data['hold'][refr]
-            except KeyError:
-                self.data['hold'][refr] = []
-            (starts_all,
-             middles_all,
-             ends_all) = dict_flatten(self.data['starts'],
-                                      self.data['middles'],
-                                      self.data['ends'])
-        elif self.types == 'output':
-            (starts_all,
-             middles_all,
-             ends_all) = (self.data['starts'][pin_ids],
-                          self.data['middles'][pin_ids],
-                          self.data['ends'][pin_ids])
-        if on in starts_all or on + off in ends_all or on in middles_all or on + off in middles_all:
-            tkMb.showinfo('Error!', 'Error in {}:\n\n'
-                                    'Time intervals '
-                                    'should not overlap for the same '
-                                    'pin!'.format(err_place_msg),
-                          parent=self.root)
-            entry.focus()
-            return False
-        # 4c. We've finished checking for validity.
-        #     If the input reached this far, it's ready to be added
-        self.data['middles'][refr] += range(on + 1, on + off)
-        front, back = 0, 0
-        self.time_combine(on_ms, off_ms, front, back, refr)
-        if on in self.data['ends'][refr] and on + off not in self.data['starts'][refr]:
-            front, back = 1, 0
-            self.data['middles'][refr].append(on)
-            self.data['ends'][refr].remove(on)
-            self.data['ends'][refr].append(on + off)
-            self.time_combine(on_ms, off_ms, front, back, refr)
-        elif on not in self.data['ends'][refr] and on + off in self.data['starts'][refr]:
-            front, back = 0, 1
-            self.data['middles'][refr].append(on + off)
-            self.data['starts'][refr].remove(on + off)
-            self.data['starts'][refr].append(on)
-            self.time_combine(on_ms, off_ms, front, back, refr)
-        elif on in self.data['ends'][refr] and on + off in self.data['starts'][refr]:
-            front, back = 1, 1
-            self.data['middles'][refr].append(on)
-            self.data['middles'][refr].append(on + off)
-            self.data['starts'][refr].remove(on + off)
-            self.data['ends'][refr].remove(on)
-            self.time_combine(on_ms, off_ms, front, back, refr)
-        else:
-            self.data['starts'][refr].append(on)
-            self.data['ends'][refr].append(on + off)
-        # Now we need to make sure this one comes out as an already validated field
-        if self.types == 'tone':
-            self.fields_validated[rows] = {'starts': on,
-                                           'middles': range(on + 1, on + off),
-                                           'ends': on + off,
-                                           'hold': [on_ms, on_ms + off_ms],
-                                           'refr': refr}
-        elif self.types == 'output':
-            pin_int = pin_to_int(refr)
-            self.fields_validated[rows + pins] = {'starts': on,
-                                                  'middles': range(on + 1, on + off),
-                                                  'ends': on + off,
-                                                  'hold': {on_ms: pin_int, off_ms: pin_int},
-                                                  'refr': refr}
-        elif self.types == 'pwm':
-            self.fields_validated[rows + pins] = {'starts': on,
-                                                  'middles': range(on + 1, on + off),
-                                                  'ends': on + off,
-                                                  'hold': [on_ms, on_ms + off_ms],
-                                                  'refr': refr}
-        # again, pwm requires some extra work before we finish...
-        if self.types == 'pwm':
-            (self.data['starts'],
-             self.data['middles'],
-             self.data['ends'],
-             self.data['hold']) = (starts_l, middles_l, ends_l, hold_l)
-        # If all is well and we requested a close, we close the GUI
-        if close_gui:
-            self.close()
-        else:
-            return True
-
-    def time_remove(self, rows, pins, refr):
-        """
-        Removes the indicated time segment
-        """
-        field = None
-        field_refr = None
-        if self.types == 'tone':
-            try:
-                self.fields_validated[rows]
-            except KeyError:
-                self.fields_validated[rows] = {'starts': -1, 'middles': [],
-                                               'ends': -1, 'hold': [], 'refr': refr}
-                return
-            field = self.fields_validated[rows]
-            field_refr = field['refr']
-        elif self.types in ['output', 'pwm']:
-            try:
-                self.fields_validated[rows + pins]
-            except KeyError:
-                self.fields_validated[rows + pins] = {'starts': -1, 'middles': [],
-                                                      'ends': -1, 'hold': [], 'refr': refr}
-                return
-            field = self.fields_validated[rows + pins]
-            field_refr = field['refr']
-        if self.types in ['tone', 'pwm']:
-            try:
-                # Check that the data exists at refr
-                self.data['starts'][field_refr], self.data['middles'][field_refr]
-                self.data['ends'][field_refr], self.data['hold'][field_refr]
-                # Remove Middles
-                for i in field['middles']:
-                    if i in self.data['middles'][field_refr]:
-                        self.data['middles'][field_refr].remove(i)
-                # Remove starts, ends, holds
-                if field['starts'] in self.data['starts'][field_refr]:
-                    self.data['starts'][field_refr].remove(field['starts'])
-                    self.data['hold'][field_refr].remove(field['starts'] * 1000)
-                elif field['starts'] in self.data['middles'][field_refr]:
-                    self.data['middles'][field_refr].remove(field['starts'])
-                    self.data['ends'][field_refr].append(field['starts'])
-                    self.data['hold'][field_refr].append(field['starts'] * 1000)
-                if field['ends'] in self.data['ends'][field_refr]:
-                    self.data['ends'][field_refr].remove(field['ends'])
-                    self.data['hold'][field_refr].remove(field['ends'] * 1000)
-                elif field['ends'] in self.data['middles'][field_refr]:
-                    self.data['middles'][field_refr].remove(field['ends'])
-                    self.data['starts'][field_refr].append(field['ends'])
-                    self.data['hold'][field_refr].append(field['ends'] * 1000)
-                # Set field to empty; we'll have to add back into it in the validate function
-                if self.types == 'tone':
-                    self.fields_validated[rows] = {'starts': -1, 'middles': [],
-                                                   'ends': -1, 'hold': [], 'refr': refr}
-                elif self.types == 'pwm':
-                    self.fields_validated[rows + pins] = {'starts': -1, 'middles': [],
-                                                          'ends': -1, 'hold': [], 'refr': refr}
-            except KeyError:
-                pass
-        elif self.types == 'output':
-            pin_int = pin_to_int(refr)
-            try:
-                self.data['starts'][field_refr], self.data['middles'][field_refr]
-                self.data['ends'][field_refr]
-                self.data['hold'][field['starts'] * 1000], self.data['hold'][field['ends'] * 1000]
-                # rm middles
-                for i in field['middles']:
-                    if i in self.data['middles'][field_refr]:
-                        self.data['middles'][field_refr].remove(i)
-                # rm s, e, h
-                if field['starts'] in self.data['starts'][field_refr]:
-                    self.data['starts'][field_refr].remove(field['starts'])
-                    if self.data['hold'][field['starts'] * 1000] == pin_int:
-                        self.data['hold'] = {key: self.data['hold'][key]
-                                             for key in self.data['hold']
-                                             if key != field['starts'] * 1000}
-                    else:
-                        self.data['hold'][field['starts'] * 1000] -= pin_int
-                elif field['starts'] in self.data['middles'][field_refr]:
-                    self.data['middles'][field_refr].remove(field['starts'])
-                    self.data['ends'][field_refr].append(field['starts'])
-                    if field['starts'] * 1000 in self.data['hold']:
-                        self.data['hold'][field['starts'] * 1000] += pin_int
-                    else:
-                        self.data['hold'][field['starts'] * 1000] = pin_int
-                if field['ends'] in self.data['ends'][field_refr]:
-                    self.data['ends'][field_refr].remove(field['ends'])
-                    if self.data['hold'][field['ends'] * 1000] == pin_int:
-                        self.data['hold'] = {key: self.data['hold'][key]
-                                             for key in self.data['hold']
-                                             if key != field['ends'] * 1000}
-                    else:
-                        self.data['hold'][field['ends'] * 1000] -= pin_int
-                elif field['ends'] in self.data['middles'][field_refr]:
-                    self.data['middles'][field_refr].remove(field['ends'])
-                    self.data['starts'][field_refr].append(field['ends'])
-                    if field['ends'] * 1000 in self.data['hold']:
-                        self.data['hold'][field['ends'] * 1000] += pin_int
-                    else:
-                        self.data['hold'][field['ends'] * 1000] = pin_int
-                # set field to empty
-                self.fields_validated[rows + pins] = {'starts': -1, 'middles': [],
-                                                      'ends': -1, 'hold': [], 'refr': refr}
-            except KeyError:
-                pass
-
-    def time_combine(self, on_ms, off_ms, front, back, refr):
-        """
-        Looks for combinable time intervals and joins
-        them into a single instruction
-        """
-        if self.types in ['pwm', 'tone']:
-            if front == 0 and back == 0:
-                self.data['hold'][refr].append(on_ms)
-                self.data['hold'][refr].append(on_ms + off_ms)
-            if front == 1:
-                self.data['hold'][refr].remove(on_ms)
-                self.data['hold'][refr].remove(on_ms)
-            if back == 1:
-                self.data['hold'][refr].remove(on_ms + off_ms)
-                self.data['hold'][refr].remove(on_ms + off_ms)
-        elif self.types == 'output':
-            pin_int = pin_to_int(refr)
-            if front == 0 and back == 0:
-                if on_ms not in self.data['hold']:
-                    self.data['hold'][on_ms] = pin_int
-                elif on_ms in self.data['hold']:
-                    self.data['hold'][on_ms] += pin_int
-                if on_ms + off_ms not in self.data['hold']:
-                    self.data['hold'][on_ms + off_ms] = pin_int
-                elif on_ms + off_ms in self.data['hold']:
-                    self.data['hold'][on_ms + off_ms] += pin_int
-            if front == 1:
-                if self.data['hold'][on_ms] == (2 * pin_int):
-                    self.data['hold'].pop(on_ms)
-                else:
-                    self.data['hold'][on_ms] -= (2 * pin_int)
-            if back == 1:
-                if self.data['hold'][on_ms + off_ms] == (2 * pin_int):
-                    self.data['hold'].pop(on_ms + off_ms)
-                else:
-                    self.data['hold'][on_ms + off] -= (2 * pin_int)
-
-    def close(self):
-        """
-        Exits GUI
-        """
-        # If we configured a max time higher than what it was before, update
-        if self.max_time > dirs.settings.ard_last_used['packet'][3]:
-            dirs.settings.ard_last_used['packet'][3] = self.max_time
-            main.ttl_time = self.max_time
-            main.grab_ard_data(destroy=True)
-            mins = min_from_sec(self.max_time / 1000, option='min')
-            secs = min_from_sec(self.max_time / 1000, option='sec')
-            main.min_entry.delete(0, Tk.END)
-            main.min_entry.insert(Tk.END, '{:0>2}'.format(mins))
-            main.sec_entry.delete(0, Tk.END)
-            main.sec_entry.insert(Tk.END, '{:0>2}'.format(secs))
-        # Retrieve data that we saved up and load into MasterGUI
-        self.return_data = []
-        if self.types == 'output':
-            self.return_data = self.data['hold']
-        elif self.types == 'tone':
-            for freq in self.data['hold']:
-                self.data['hold'][freq] = sorted(self.data['hold'][freq])
-                for i in range(len(self.data['hold'][freq])):
-                    if i % 2 == 0:
-                        self.return_data.append([self.data['hold'][freq][i],
-                                                 self.data['hold'][freq][i + 1],
-                                                 freq])
-        elif self.types == 'pwm':
-            for pin_int in self.data['hold']:
-                for refr in self.data['hold'][pin_int]:
-                    refr_i = str(refr)
-                    freq_i, duty_i, phase_i = (int(refr_i[:-10]),
-                                               int(refr_i[-10:-5]),
-                                               int(refr_i[-5:]))
-                    self.data['hold'][pin_int][refr] = sorted(self.data['hold'][pin_int][refr])
-                    for i in range(len(self.data['hold'][pin_int][refr])):
-                        if i % 2 == 0:
-                            self.return_data.append([0,
-                                                     self.data['hold'][pin_int][refr][i],
-                                                     self.data['hold'][pin_int][refr][i + 1],
-                                                     freq_i,
-                                                     pin_int,
-                                                     phase_i,
-                                                     duty_i])
-        self.root.destroy()
-        self.root.quit()
-
-    def button_toggle(self, tags):
-        """
-        Toggles the selected check button
-        :param tags: tone, output, pwm
-        :return:
-            None
-        """
-        if tags == 'tone':
-            if self.tone_var.get() == 0:
-                for row in range(self.num_entries):
-                    self.entries[row].configure(state=Tk.DISABLED)
-            elif self.tone_var.get() == 1:
-                for row in range(self.num_entries):
-                    self.entries[row].configure(state=Tk.NORMAL)
-        else:
-            var, ind = None, None
-            if tags in self.output_ids:
-                ind = self.output_ids.index(tags)
-                var = self.output_var[ind]
-            elif tags in self.pwm_ids:
-                ind = self.pwm_ids.index(tags)
-                var = self.pwm_var[ind]
-            if var.get() == 0:
-                for entry in range(self.num_entries):
-                    self.entries[ind][entry].configure(state=Tk.DISABLED)
-            elif var.get() == 1:
-                for entry in range(self.num_entries):
-                    self.entries[ind][entry].configure(state=Tk.NORMAL)
-
-    def pre_close(self):
-        """
-        Forces focus on button to do final validation check
-        """
-        focus_is_entry = False
-        current_focus = self.root.focus_get()
-        if self.types == 'tone':
-            if current_focus in self.entries:
-                focus_is_entry = True
-        elif self.types in ['pwm', 'output']:
-            for pin in self.entries:
-                if current_focus in pin:
-                    focus_is_entry = True
-        if focus_is_entry:
-            self.close_gui = True
-            self.closebutton.focus()
-        else:
-            self.close()
-
-    def tone_setup(self):
-        """
-        Tone GUI for arduino
-        :return:
-            None
-        """
-        self.root.title('Tone Configuration')
-        self.types = 'tone'
-        num_pins, self.num_entries = 1, 15
-        scroll_frame = ScrollFrame(self.root, num_pins, self.num_entries + 1)
-        # Setup Buttons
-        self.tone_var = Tk.IntVar()
-        self.tone_var.set(0)
-        button = Tk.Checkbutton(scroll_frame.top_frame,
-                                text='Enable Tone\n'
-                                     '(Arduino Pin 10)',
-                                variable=self.tone_var,
-                                onvalue=1, offvalue=0,
-                                command=lambda tags='tone': self.button_toggle(tags))
-        button.pack()
-        # Setup Entries
-        self.entries = copy.deepcopy([[]] * self.num_entries)
-        Tk.Label(scroll_frame.middle_frame,
-                 text='Time On(s), '
-                      'Time until Off(s), '
-                      'Freq (Hz)').grid(row=0, column=1, sticky=self.ALL)
-        for row in range(self.num_entries):
-            Tk.Label(scroll_frame.middle_frame,
-                     text='{:0>2}'.format(row + 1)).grid(row=row + 1, column=0)
-            validate = (scroll_frame.middle_frame.register(self.entry_validate),
-                        False, row)
-            self.entries[row] = Tk.Entry(
-                scroll_frame.middle_frame,
-                validate='focusout',
-                validatecommand=validate)
-            self.entries[row].grid(row=row + 1, column=1, sticky=self.ALL)
-            self.entries[row].config(state=Tk.DISABLED)
-        # Confirm button
-        self.closebutton = Tk.Button(scroll_frame.bottom_frame,
-                                     text='CONFIRM',
-                                     command=self.pre_close)
-        self.closebutton.pack(side=Tk.TOP)
-        scroll_frame.finalize()
-        # Finish setup
-        self.center()
-        geometry = self.platform_geometry('250x325', '257x272')
-        if geometry:
-            self.root.geometry(geometry)
-        else:
-            pass
-
-    def output_setup(self):
-        """
-        Output GUI for Arduino
-        :return:
-            None
-        """
-        self.root.title('Simple Output Config.')
-        self.types = 'output'
-        num_pins, self.num_entries = 6, 15
-        scroll_frame = ScrollFrame(self.root, num_pins, self.num_entries + 1,
-                                   bottom_padding=8)
-        info_frame = Tk.LabelFrame(scroll_frame.top_frame,
-                                   text='Enable Arduino Pins')
-        info_frame.grid(row=0, column=0, sticky=self.ALL)
-        Tk.Label(info_frame, text=' ' * 21).pack(side=Tk.RIGHT)
-        Tk.Label(info_frame, text='Enable pins, then input instructions '
-                                  'line by line with comma '
-                                  'separation.',
-                 relief=Tk.RAISED).pack(side=Tk.RIGHT)
-        Tk.Label(info_frame, text=' ' * 21).pack(side=Tk.RIGHT)
-        # Variables
-        self.entries = []
-        for pin in range(num_pins):
-            self.entries.append([])
-            for entry in range(self.num_entries):
-                self.entries[pin].append([])
-        button = copy.deepcopy([[]] * num_pins)
-        self.output_var = self.create_tk_vars('Int', num_pins)
-        # Setup items
-        for pin in range(num_pins):
-            button[pin] = Tk.Checkbutton(info_frame,
-                                         text='PIN {:0>2}'.format(
-                                             self.output_ids[pin]),
-                                         variable=self.output_var[pin],
-                                         onvalue=1, offvalue=0,
-                                         command=lambda tags=self.output_ids[pin]:
-                                         self.button_toggle(tags))
-            button[pin].pack(side=Tk.LEFT)
-            Tk.Label(scroll_frame.middle_frame,
-                     text='Pin {:0>2}\n'
-                          'Time On(s), '
-                          'Time until Off(s)'.format(self.output_ids[pin])).grid(row=0,
-                                                                                 column=1 + pin)
-            for row in range(self.num_entries):
-                validate = (scroll_frame.middle_frame.register(self.entry_validate),
-                            pin, row)
-                Tk.Label(scroll_frame.middle_frame,
-                         text='{:0>2}'.format(row + 1)).grid(row=row + 1, column=0)
-                self.entries[pin][row] = Tk.Entry(scroll_frame.middle_frame, width=18,
-                                                  validate='focusout',
-                                                  validatecommand=validate)
-                self.entries[pin][row].grid(row=row + 1, column=1 + pin)
-                self.entries[pin][row].config(state=Tk.DISABLED)
-        # Confirm Button
-        self.closebutton = Tk.Button(scroll_frame.bottom_frame,
-                                     text='CONFIRM',
-                                     command=self.pre_close)
-        self.closebutton.pack(side=Tk.TOP)
-        # Finish GUI Setup
-        scroll_frame.finalize()
-        self.center()
-        geometry = self.platform_geometry(windows='1000x400',
-                                          darwin='1110x272')
-        if geometry:
-            self.root.geometry(geometry)
-        else:
-            pass
-
-    def pwm_setup(self):
-        """
-        PWM Config GUI Setup
-        """
-        self.root.title('PWM Configuration')
-        self.types = 'pwm'
-        num_pins, self.num_entries = 5, 15
-        scroll_frame = ScrollFrame(self.root, num_pins,
-                                   self.num_entries + 1, bottom_padding=24)
-        info_frame = Tk.LabelFrame(scroll_frame.top_frame,
-                                   text='Enable Arduino Pins')
-        info_frame.grid(row=0, column=0, sticky=self.ALL)
-        Tk.Label(info_frame, text=' ' * 2).pack(side=Tk.RIGHT)
-        Tk.Label(info_frame, text='e.g. 0,180,200,20,90  (Per Field)',
-                 relief=Tk.RAISED).pack(side=Tk.RIGHT)
-        Tk.Label(info_frame, text=' ' * 2).pack(side=Tk.RIGHT)
-        Tk.Label(info_frame,
-                 text='Enable pins, then input instructions '
-                      'with comma separation.',
-                 relief=Tk.RAISED).pack(side=Tk.RIGHT)
-        Tk.Label(info_frame,
-                 text=' ' * 5).pack(side=Tk.RIGHT)
-        # Variables
-        self.entries = []
-        for pin in range(num_pins):
-            self.entries.append([])
-            for entry in range(self.num_entries):
-                self.entries[pin].append([])
-        button = copy.deepcopy([[]] * num_pins)
-        self.pwm_var = self.create_tk_vars('Int', num_pins)
-        # Setup items
-        for pin in range(num_pins):
-            button[pin] = Tk.Checkbutton(
-                info_frame,
-                text='Pin {:0>2}'.format(self.pwm_ids[pin]),
-                variable=self.pwm_var[pin],
-                onvalue=1, offvalue=0,
-                command=lambda tags=self.pwm_ids[pin]: self.button_toggle(tags))
-            button[pin].pack(side=Tk.LEFT)
-            Tk.Label(scroll_frame.middle_frame,
-                     text='Pin {:0>2}\n'
-                          'Time On(s), '
-                          'Time until Off(s), \n'
-                          'Freq (Hz), '
-                          'Duty Cycle (%),\n'
-                          'Phase Shift '.format(self.pwm_ids[pin]) + '(' + u'\u00b0' + ')').grid(row=0, column=1 + pin)
-            for row in range(self.num_entries):
-                validate = (scroll_frame.middle_frame.register(self.entry_validate),
-                            pin, row)
-                Tk.Label(scroll_frame.middle_frame,
-                         text='{:0>2}'.format(row + 1)).grid(row=row + 1, column=0)
-                self.entries[pin][row] = Tk.Entry(scroll_frame.middle_frame, width=25,
-                                                  validate='focusout',
-                                                  validatecommand=validate)
-                self.entries[pin][row].grid(
-                    row=row + 1, column=1 + pin)
-                self.entries[pin][row].config(state='disabled')
-        # Confirm Button
-        self.closebutton = Tk.Button(scroll_frame.bottom_frame,
-                                     text='CONFIRM',
-                                     command=self.pre_close)
-        self.closebutton.pack(side=Tk.TOP)
-        # Finish Tone Setup
-        scroll_frame.finalize()
-        geometry = self.platform_geometry(windows=False,
-                                          darwin='1100x280')
-        if geometry:
-            self.root.geometry(geometry)
-        else:
-            pass
-        self.center()
+            self.cmr_toggle_button.config(state=Tk.NORMAL)
 
 
 #################################################################
-# Threaded Tasks
-# Tasks that run under the GUI and last more than 1s should
-#   be threaded to prevent GUI freezing
-###############################
-# Progress Bar
-class ProgressBar(threading.Thread):
-    """
-    Creates a dynamic progress bar
-    """
-    def __init__(self, canvas, bar, time_gfx, ms_total_time):
+# Non-GUI Threads
+class GUIThreadHandler(threading.Thread):
+    """Handles all non-gui processing and communicates
+    with GUI via queue polling"""
+    def __init__(self, master_gui_queue, instructions_queue):
         threading.Thread.__init__(self)
         self.daemon = True
-        self.canvas = canvas
-        self.segment_size = (float(ms_total_time / 1000)) / 1000
-        self.ms_total_time = ms_total_time
-        self.bar = bar
-        self.time_gfx = time_gfx
-        self.running = False
-        self.start_prog = None
-        self.num_prog, self.num_time = 1, 1
-        self.time_diff = 0
-
-    def start(self):
-        """
-        Starts the progress bar
-        """
-        if self.num_prog != 1:
-            self.canvas.move(self.bar, -self.num_prog + 1, 0)
-            if (-self.num_prog + 1 + 35) < 0:
-                text_move = max(-self.num_prog + 1 + 35, -929)
-                self.canvas.move(self.time_gfx, text_move, 0)
-            self.num_prog, self.num_time = 1, 1
-        self.start_prog = datetime.now()
+        self.name = 'Subthread Handler'
+        # Thread handling
+        # Queues
+        self.report_queue = master_gui_queue
+        self.instruct_queue = instructions_queue
+        # Devices Locks
+        self.lj_read_ready_lock = threading.Event()
+        self.lj_exp_ready_lock = threading.Event()
+        self.ard_ready_lock = threading.Event()
+        self.cmr_ready_lock = threading.Event()
+        # Devices
+        self.lj_device = None
+        self.cmr_device = None
+        self.ard_device = None
+        # Use this device?
+        self.lj_use = True
+        self.ard_use = True
+        self.cmr_use = True
+        self.lj_created = False
+        self.ard_created = False
+        self.cmr_created = False
+        self.devices_created = False
+        # main handler loop
+        self.hard_stop_experiment = False
+        self.exp_is_running = False
         self.running = True
+
+    def run(self):
+        """Periodically processes queue instructions from
+        master gui; (starts the thread)"""
+        # because the camera needs to immediately start streaming,
+        # we set it up now if possible
+        self.cmr_device = FireFly(lj_exp_ready_lock=self.lj_exp_ready_lock,
+                                  master_gui_queue=self.report_queue,
+                                  cmr_ready_lock=self.cmr_ready_lock,
+                                  ard_ready_lock=self.ard_ready_lock)
+        if self.cmr_device.initialize():
+            camera_thread = threading.Thread(target=self.cmr_device.camera_run,
+                                             name='Camera Stream')
+            camera_thread.daemon = True
+            camera_thread.start()
+            self.cmr_created = True
+        # loops until we exit the program
         while self.running:
-            now = datetime.now()
-            self.time_diff = (now - self.start_prog).seconds + float((now - self.start_prog).microseconds) / 1000000
-            if self.time_diff / self.num_time >= 0.005:
-                self.canvas.itemconfig(self.time_gfx,
-                                       text='{}'.format(min_from_sec(self.time_diff, True)))
-                self.num_time += 1
-            if self.time_diff / self.num_prog >= self.segment_size:
-                self.canvas.move(self.bar, 1, 0)
-                if (self.num_prog > 35) and (self.num_prog < 965):
-                    self.canvas.move(self.time_gfx, 1, 0)
-                self.num_prog += 1
-            self.canvas.update()
-            time.sleep(0.010)
-            if self.num_prog > 1000 or self.time_diff > float(self.ms_total_time / 1000):
-                self.running = False
-                return self.running
-
-    def stop(self):
-        """
-        Stops the progress bar
-        """
-        self.running = False
-
-
-# Arduino Communication
-class ArduinoComm(threading.Thread):
-    """
-    Handles serial communication with arduino
-    """
-
-    def __init__(self, queue):
-        threading.Thread.__init__(self)
-        self.daemon = True
-        self.baudrate = 115200
-        self.ser_port = dirs.settings.ser_port
-        # Markers are unicode chrs '<' and '>'
-        self.start_marker, self.end_marker = 60, 62
-        self.serial = None
-        self.queue = queue
-        self.success_msg = 'SuccessArd'
-        self.fail_msg = 'FailedArd'
-        self.msg_header = '<ardmsg>'
-
-    def send_to_ard(self, send_str):
-        """
-        Sends packed str to arduino
-        """
-        self.serial.write(send_str)
-
-    def get_from_ard(self):
-        """
-        Reads serial data from arduino
-        """
-        ard_string = ''
-        byte_hold = 'z'
-        byte_count = -1
-        # We read and discard serial data until we hit '<'
-        while ord(byte_hold) != self.start_marker:
-            byte_hold = self.serial.read()
-        # Then we read and record serial data until we hit '>'
-        while ord(byte_hold) != self.end_marker:
-            if ord(byte_hold) != self.start_marker:
-                ard_string += byte_hold
-                byte_count += 1
-            byte_hold = self.serial.read()
-        return ard_string
-
-    def send_packets(self, *args):
-        """
-        Send experiment config to arduino
-        """
-        for each in args:
-            for i in range(len(each)):
-                if len(each) > 0:
+            try:
+                msg = self.instruct_queue.get_nowait()
+            except Queue.Empty:
+                pass
+            else:
+                if msg == '<run>':
+                    if not self.devices_created:
+                        if all(self.create_devices()):
+                            self.devices_created = True
+                    if all(self.check_connections()):
+                        # devices needed are connected. start exp
+                        if self.cmr_use:
+                            self.cmr_device.recording = True
+                        if self.lj_use:
+                            lj_stream_thread = threading.Thread(target=self.lj_device.read_stream_data,
+                                                                name='LabJack Stream')
+                            lj_stream_thread.daemon = True
+                            lj_write_thread = threading.Thread(target=self.lj_device.data_write_plot,
+                                                               name='LabJack Data Write')
+                            lj_write_thread.daemon = True
+                            lj_write_thread.start()
+                            lj_stream_thread.start()
+                            self.lj_device.running = True
+                        if self.ard_use:
+                            ard_thread = threading.Thread(target=self.ard_device.run_experiment,
+                                                          name='Arduino Control')
+                            ard_thread.daemon = True
+                            ard_thread.start()
+                            self.ard_device.running = True
+                        self.exp_is_running = True
+                elif msg == '<hardstop>':
+                    self.hard_stop_experiment = True
                     try:
-                        get_str = self.get_from_ard()
-                        if get_str == 'M':
-                            self.send_to_ard(pack(*each[i]))
-                    except TypeError:
-                        raise serial.serialutil.SerialException
+                        self.lj_device.hard_stopped = True
+                        self.lj_device.running = False
+                    except AttributeError:
+                        pass
+                    try:
+                        self.ard_device.hard_stopped = True
+                        self.ard_device.running = False
+                    except AttributeError:
+                        pass
+                    try:
+                        self.cmr_device.hard_stopped = True
+                        self.cmr_device.recording = False
+                    except AttributeError:
+                        pass
+                elif msg == '<ljoff>':
+                    self.lj_use = False
+                    self.lj_read_ready_lock.set()
+                    self.lj_exp_ready_lock.set()
+                elif msg == '<ardoff>':
+                    self.ard_use = False
+                    self.ard_ready_lock.set()
+                elif msg == '<cmroff>':
+                    self.cmr_use = False
+                    self.cmr_ready_lock.set()
+                elif msg == '<ljon>':
+                    self.lj_use = True
+                    self.lj_read_ready_lock.clear()
+                    self.lj_exp_ready_lock.clear()
+                    self.devices_created = False
+                elif msg == '<ardon>':
+                    self.ard_use = True
+                    self.ard_ready_lock.clear()
+                    self.devices_created = False
+                elif msg == '<cmron>':
+                    self.cmr_use = True
+                    self.cmr_ready_lock.clear()
+                    self.devices_created = False
+                elif msg == '<exit>':
+                    self.close_devices()
+                if DEBUG:
+                    print msg
+            if self.exp_is_running:
+                devices_to_check = []
+                if self.cmr_use:
+                    devices_to_check.append(self.cmr_device.recording)
+                if self.lj_use:
+                    devices_to_check.append(self.lj_device.running)
+                if self.ard_use:
+                    devices_to_check.append(self.ard_device.running)
+                if not any(devices_to_check):
+                    msg_with_save_status = '<exp_end>'
+                    if self.hard_stop_experiment:
+                        msg_with_save_status += 'Terminated.'
+                        self.hard_stop_experiment = False
+                    elif not self.hard_stop_experiment:
+                        msg_with_save_status += "Data saved in '{}'".format(dirs.results_dir)
+                    self.report_queue.put_nowait(msg_with_save_status)
+                    self.exp_is_running = False
+            time.sleep(0.01)
 
-    def run(self):
-        """
-        Tries every possible serial port
-        """
-        # We can't directly access the string variables
-        # for arduino or labjack status messages as this
-        # gets screwed up with threading.
-        # so we queue up the messages as well with
-        # a type specific header
-        ports = list_serial_ports()
-        self.queue.put('{}Connecting to Port '
-                       '[{}]...'.format(self.msg_header, self.ser_port))
-        connected = self.try_serial(self.ser_port)
-        if connected:
-            self.queue.put('{}Success! Connected to Port '
-                           '[{}].'.format(self.msg_header, self.ser_port))
-            self.queue.put(self.success_msg)
-            return
-        elif not connected:
-            for port in ports:
-                if self.try_serial(port):
-                    self.ser_port = port
-                    dirs.settings.ser_port = port
-                    self.queue.put('{}** Failed to connect. '
-                                   'Attempting next Port '
-                                   '[{}]...'.format(self.msg_header, port))
-                    self.queue.put(self.success_msg)
-                    return
-            self.queue.put('{}** Arduino cannot be reached! '
-                           'Please make sure the device '
-                           'is plugged in.'.format(self.msg_header))
-            self.queue.put(self.fail_msg)
-            return
+    def check_connections(self):
+        """Checks that user enabled devices are ready to go"""
+        devices_ready = []
+        if self.lj_use:
+            self.lj_device.check_connection()
+            devices_ready.append(self.lj_device.connected)
+        if self.ard_use:
+            self.ard_device.check_connection()
+            devices_ready.append(self.ard_device.connected)
+        if self.cmr_use:
+            # we already checked connection in the cmr
+            # initialize function.
+            devices_ready.append(self.cmr_device.connected)
+        return devices_ready
 
-    def wait_for(self):
-        """
-        Wait for ready message from arduino
-        """
-        msg = ''
-        start = datetime.now()
-        while msg.find('Arduino is ready') == -1:
-            while self.serial.inWaiting() == 0:
-                time.sleep(0.1)
-                time_diff = get_time_diff(start)
-                if time_diff > 3500:
-                    return False
-            msg = self.get_from_ard()
-        if msg == 'Arduino is ready':
-            return True
-
-    def try_serial(self, port):
-        """
-        Given a port, attempts to connect to it
-        """
-        try:
-            self.serial = serial.Serial(port, self.baudrate)
+    def create_devices(self):
+        """Creates device instances"""
+        devices_ready = []
+        if self.lj_use and not self.lj_created:
             try:
-                success = self.wait_for()
-                if success:
-                    dirs.settings.ser_port = port
-                    return True
-                else:
-                    return False
-            except IOError:
-                return False
-        except (serial.SerialException, IOError):
-            return False
+                self.report_queue.put_nowait('<lj>Creating LabJack Instance...')
+                self.lj_device = LabJackU6(ard_ready_lock=self.ard_ready_lock,
+                                           cmr_ready_lock=self.cmr_ready_lock,
+                                           master_gui_queue=self.report_queue,
+                                           lj_read_ready_lock=self.lj_read_ready_lock,
+                                           lj_exp_ready_lock=self.lj_exp_ready_lock)
+                self.lj_created = True
+                devices_ready.append(self.lj_created)
+            except (LabJackException, LowlevelErrorException):
+                self.report_queue.put_nowait('<lj>** LabJack could not be initialized! '
+                                             'Please perform a manual hard reset (disconnect'
+                                             ' then reconnect.')
+                self.lj_created = False
+                devices_ready.append(self.lj_created)
+        if self.cmr_use and not self.cmr_created:
+            if self.cmr_device.initialize():
+                camera_thread = threading.Thread(target=self.cmr_device.camera_run,
+                                                 name='CameraStreamThread')
+                camera_thread.daemon = True
+                camera_thread.start()
+                self.cmr_created = True
+                devices_ready.append(self.cmr_created)
+        if self.ard_use and not self.ard_created:
+            self.ard_device = ArduinoUno(lj_exp_ready_lock=self.lj_exp_ready_lock,
+                                         master_gui_queue=self.report_queue,
+                                         ard_ready_lock=self.ard_ready_lock,
+                                         cmr_ready_lock=self.cmr_ready_lock)
+            self.ard_created = True
+            devices_ready.append(self.ard_created)
+        return devices_ready
 
-    def reset(self):
-        """
-        Resets serial connection
-        Useful for flushing
-        """
-        self.serial.setDTR(False)
-        time.sleep(0.022)
-        self.serial.setDTR(True)
-
-
-##################
-# LabJack
-# Check LJ Connections
-class LabJackComm(threading.Thread):
-    """
-    Checks if LJU6 is available or is being taken up by
-    another program instance, disconnected, etc.
-    """
-
-    def __init__(self, queue, lj_device):
-        threading.Thread.__init__(self)
-        self.daemon = True
-        self.queue = queue
-        self.success_msg = 'SuccessLJ'
-        self.fail_msg = 'FailedLJ'
-        self.msg_header = '<ljmsg>'
-        self.device = lj_device
-
-    def run(self):
-        """
-        Attempts to connect to Labjack
-        """
-        self.queue.put('{}Connecting to LabJack...'.format(self.msg_header))
+    def close_devices(self):
+        """attempts to close hardware properly, and reports
+        close status to GUI"""
+        lj_error, cmr_error, ard_error = False, False, False
         try:
-            self.device.close()
-            self.device.open()
-            self.queue.put('{}Connected to LabJack!'.format(self.msg_header))
-            self.queue.put(self.success_msg)
-            return
-        except (LabJackPython.LabJackException, AttributeError):
+            self.lj_device.streamStop()
+            self.lj_device.close()
+            if DEBUG:
+                print 'LabJack Closed Successfully. Exit Code: [SSb]'
+        except (LabJackException, LowlevelErrorException):
             try:
-                self.queue.put('{}** Failed to connect. '
-                               'Attempting a '
-                               'hard reset...'.format(self.msg_header))
-                time.sleep(2)
-                self.device.hardReset()
-                time.sleep(2)
-                self.device.open()
-                self.queue.put('{}Connected to LabJack!'.format(self.msg_header))
-                self.queue.put(self.success_msg)
-                return
-            except (LabJackPython.LabJackException, AttributeError):
-                self.queue.put('{}** LabJack cannot be reached! '
-                               'Please reconnect the device.'.format(self.msg_header))
-                self.queue.put(self.fail_msg)
-                return
-
-
-# Main LabJack class
-# noinspection PyDefaultArgument,PyAttributeOutsideInit
-class LJU6(u6.U6):
-    """
-    Modified from stock U6 to include better
-    Samples per packet / packet per request
-    determination
-    """
-
-    def __init__(self, exp_lock, read_lock, report_queue):
-        u6.U6.__init__(self)
-        self.data = Queue.Queue()
-        # threading events to block other threads until ready
-        self.exp_lock = exp_lock  # blocks progress bar, arduino, and camera
-        self.read_lock = read_lock  # blocks data reading
+                self.lj_device.close()
+                self.lj_device.streamStop()
+                if DEBUG:
+                    print 'LabJack Closed Successfully. Exit Code: [SSa]'
+            except (LabJackException, LowlevelErrorException):
+                try:
+                    self.lj_device.close()
+                    if DEBUG:
+                        print 'LabJack Closed Successfully. Exit Code: [NC]'
+                except LabJackException:
+                    lj_error = True
+        except AttributeError:
+            pass
+        # ... and camera
+        try:
+            self.cmr_device.close()
+            if DEBUG:
+                print 'Camera Closed Successfully.'
+        except fc2.ApiError:
+            cmr_error = True
+        except AttributeError:
+            pass
+        # ... and arduino
+        try:
+            self.ard_device.serial.close()
+            if DEBUG:
+                print 'Arduino Closed Successfully.'
+        except serial.SerialException:
+            ard_error = True
+        except AttributeError:
+            pass
+        if any((lj_error, cmr_error, ard_error)):
+            error_msg = '<ex_err>'
+            if lj_error:
+                error_msg += 'lj,'
+            if cmr_error:
+                error_msg += 'cmr,'
+            if ard_error:
+                error_msg += 'ard,'
+            error_msg = error_msg[:-1]
+            self.report_queue.put_nowait(error_msg)
+        else:
+            self.report_queue.put_nowait('<ex_succ>')
         self.running = False
-        self.ch_num = []
-        self.scan_freq = 0
-        self.n_ch = 0
+
+
+class LabJackU6(u6.U6):
+    """LabJack control functions"""
+    def __init__(self, ard_ready_lock, cmr_ready_lock, master_gui_queue,
+                 lj_read_ready_lock, lj_exp_ready_lock):
+        u6.U6.__init__(self)
+        self.running = False
+        self.hard_stopped = False
+        self.connected = False
+        self.time_start_read = datetime.now()
+        ##########################################################
+        # Threading Controls
+        # Locks to wait on:
+        self.ard_ready_lock = ard_ready_lock
+        self.cmr_ready_lock = cmr_ready_lock
+        # Locks to control:
+        self.lj_read_ready_lock = lj_read_ready_lock
+        self.lj_exp_ready_lock = lj_exp_ready_lock
+        # Queues:
+        self.data_queue = Queue.Queue()
+        self.status_queue = master_gui_queue
+        ##########################################################
+        # Hardware Parameters
+        self.ch_num = [0]
+        self.scan_freq = 1
+        self.n_ch = 1
         self.reinitialize_vars()
-        self.time_start_read = 0
-        self.report_queue = report_queue
+        self.streamSamplesPerPacket = 25
+        self.packetsPerRequest = 48
+        self.streamChannelNumbers = self.ch_num
+        self.streamChannelOptions = [0] * self.n_ch
+
+    def check_connection(self):
+        """Checks if LabJack is ready to be connected to"""
+        self.status_queue.put_nowait('<lj>Connecting to LabJack...')
+        try:
+            self.close()
+            self.open()
+            self.status_queue.put('<lj>Connected to LabJack!')
+            self.connected = True
+            return
+        except LabJackException:
+            try:
+                self.streamStop()
+                self.close()
+                self.open()
+                self.status_queue.put('<lj>Connected to LabJack!')
+                self.connected = True
+                return
+            except (LabJackException, LowlevelErrorException):
+                try:
+                    self.status_queue.put('<lj>Failed. Attempting a Hard Reset...')
+                    self.hardReset()
+                    time.sleep(2.5)
+                    self.open()
+                    self.status_queue.put('<lj>Connected to LabJack!')
+                    self.connected = True
+                    return
+                except LabJackException:
+                    self.status_queue.put('<lj>** LabJack cannot be reached! '
+                                          'Please reconnect the device.')
+                    self.connected = False
+                    return
+
+    def reinitialize_vars(self):
+        """Reloads channel and freq information from settings
+        in case they were changed. call this before any lj streaming"""
+        self.ch_num = dirs.settings.lj_last_used['ch_num']
+        self.scan_freq = dirs.settings.lj_last_used['scan_freq']
+        self.n_ch = len(self.ch_num)
 
     @staticmethod
     def find_packets_per_req(scanFreq, nCh):
-        """
-        Returns optimal packets per request to use
-        """
+        """Returns optimal packets per request to use"""
         if nCh == 7:
             high = 42
         else:
@@ -2993,31 +2693,27 @@ class LJU6(u6.U6):
 
     @staticmethod
     def find_samples_per_pack(scanFreq, nCh):
-        """
-        Returns optimal samples per packet to use
-        """
+        """Returns optimal samples per packet to use"""
         hold = []
         for i in range(scanFreq + 1):
             if i % nCh == 0:
                 hold.append(i)
         return max(hold)
 
-    # noinspection PyUnusedLocal
+    # noinspection PyDefaultArgument
     def streamConfig(self, NumChannels=1, ResolutionIndex=0,
                      SamplesPerPacket=25, SettlingFactor=0,
                      InternalStreamClockFrequency=0, DivideClockBy256=False,
                      ScanInterval=1, ChannelNumbers=[0],
                      ChannelOptions=[0], ScanFrequency=None,
                      SampleFrequency=None):
-        """
-        Sets up LJ device
-        """
+        """Sets up Streaming settings"""
         if NumChannels != len(ChannelNumbers) or NumChannels != len(ChannelOptions):
-            raise LabJackPython.LabJackException("NumChannels must match length "
-                                                 "of ChannelNumbers and ChannelOptions")
+            raise LabJackException("NumChannels must match length "
+                                   "of ChannelNumbers and ChannelOptions")
         if len(ChannelNumbers) != len(ChannelOptions):
-            raise LabJackPython.LabJackException("len(ChannelNumbers) doesn't "
-                                                 "match len(ChannelOptions)")
+            raise LabJackException("len(ChannelNumbers) doesn't "
+                                   "match len(ChannelOptions)")
         if (ScanFrequency is not None) or (SampleFrequency is not None):
             if ScanFrequency is None:
                 ScanFrequency = SampleFrequency
@@ -3062,13 +2758,6 @@ class LJU6(u6.U6):
         self.streamChannelNumbers = ChannelNumbers
         self.streamChannelOptions = ChannelOptions
         self.streamConfiged = True
-        if InternalStreamClockFrequency == 1:
-            freq = float(48000000)
-        else:
-            freq = float(4000000)
-        if DivideClockBy256:
-            freq /= 256
-        freq = freq / ScanInterval
         # Only happens for ScanFreq < 25, in which case
         # this number is generated as described above
         if SamplesPerPacket < 25:
@@ -3078,161 +2767,205 @@ class LJU6(u6.U6):
         # Such that PacketsPerRequest*SamplesPerPacket % NumChannels == 0,
         # where min P/R is 1 and max 48 for nCh 1-6,8
         # and max 42 for nCh 7.
-        self.samplesPerPacket = SamplesPerPacket
 
     def read_with_counter(self, num_requests, datacount_hold):
-        """
-        Given a number of requests, pulls from labjack
-         and returns number of data pulled
-        """
+        """Given a number of requests, pulls data from labjack
+         and returns number of data points pulled"""
         reading = True
         datacount = 0
         while reading:
             if not self.running:
                 break
             return_dict = self.streamData(convert=False).next()
-            self.data.put_nowait(copy.deepcopy(return_dict))
+            self.data_queue.put_nowait(deepcopy(return_dict))
             datacount += 1
             if datacount >= num_requests:
                 reading = False
         datacount_hold.append(datacount)
 
-    def reinitialize_vars(self):
-        """
-        Reloads channel and frequency information in case they were changed
-        call this before starting any lj streaming
-        """
-        self.ch_num = dirs.settings.lj_last_used['ch_num']
-        self.scan_freq = dirs.settings.lj_last_used['scan_freq']
-        self.n_ch = len(self.ch_num)
-
-    # noinspection PyUnboundLocalVariable,PyUnusedLocal
+    # noinspection PyUnboundLocalVariable
     def read_stream_data(self):
-        """
-        Reads from stream and puts in queue
-        """
+        """Reads from stream and puts in queue"""
+        # pulls lj config and sets up the stream
         self.reinitialize_vars()
-        datacount_hold = []
         self.getCalibrationData()
         self.streamConfig(NumChannels=self.n_ch, ChannelNumbers=self.ch_num,
                           ChannelOptions=[0] * self.n_ch, ScanFrequency=self.scan_freq)
+        datacount_hold = []
         ttl_time = dirs.settings.ard_last_used['packet'][3]
         max_requests = int(math.ceil(
             (float(self.scan_freq * self.n_ch * ttl_time / 1000) / float(
-                self.packetsPerRequest * self.samplesPerPacket))))
+                self.packetsPerRequest * self.streamSamplesPerPacket))))
         small_request = int(round(
             (float(self.scan_freq * self.n_ch * 0.5) / float(
-                self.packetsPerRequest * self.samplesPerPacket))))
+                self.packetsPerRequest * self.streamSamplesPerPacket))))
         # We will read 3 segments: 0.5s before begin exp, during exp, and 0.5s after exp
-        # 1. 0.5s before exp. start; extra collected for safety
+        # 1. we need to open the stream
+        try:
+            self.streamStart()
+        except LowlevelErrorException:
+            self.streamStop()  # happens if a previous instance was not closed properly
+            self.streamStart()
+        # 2. wait until arduino and camera are ready
+        self.ard_ready_lock.wait()
+        self.cmr_ready_lock.wait()
+        # 3. then we begin streaming and recording (0.5s before ard and cmr start)
+        self.status_queue.put_nowait('<lj>Started Streaming.')
+        ####################################################################
+        # STARTED STREAMING
         self.time_start_read = datetime.now()
+        self.lj_read_ready_lock.set()
         self.running = True
-        self.streamStart()
-        self.read_lock.set()  # we will now allow data reading
         while self.running:
+            # at anytime, this can be disrupted by a hardstop from the main thread
+            # 1. 0.5s before exp start; extra collected to avoid missing anything
             self.read_with_counter(small_request, datacount_hold)
             # 2. read for duration of time specified in dirs.settings.ard_last_used['packet'][3]
-            self.exp_lock.set()  # we also unblock progress bar, arduino, and camera threads
+            self.lj_exp_ready_lock.set()  # we also unblock arduino and camera threads
             time_start = datetime.now()
             self.read_with_counter(max_requests, datacount_hold)
             time_stop = datetime.now()
             # 3. read for another 0.5s after
             self.read_with_counter(small_request, datacount_hold)
+            time_stop_read = datetime.now()
             self.running = False
-        time_stop_read = datetime.now()
+        self.running = False
         self.streamStop()
-        self.data.queue.clear()
-        self.read_lock.clear()
-        self.exp_lock.clear()
+        if not self.hard_stopped:
+            self.status_queue.put_nowait('<lj>Finished Successfully.')
+        elif self.hard_stopped:
+            self.status_queue.put_nowait('<lj>Terminated Stream.')
+            self.hard_stopped = False
+        self.lj_read_ready_lock.clear()
+        self.lj_exp_ready_lock.clear()
+        ####################################################################
         # now we do some reporting
-        # samples taken for each interval:
-        multiplier = self.packetsPerRequest * self.streamSamplesPerPacket
-        datacount_hold = (np.asarray(datacount_hold)) * multiplier
-        total_samples = sum(i for i in datacount_hold)
-        # total run times for each interval
-        before_run_time = get_time_diff(start_time=self.time_start_read, end_time=time_start, choice='us')
-        run_time = get_time_diff(start_time=time_start, end_time=time_stop, choice='us')
-        after_run_time = get_time_diff(start_time=time_stop, end_time=time_stop_read, choice='us')
-        total_run_time = get_time_diff(start_time=self.time_start_read, end_time=time_stop_read, choice='us')
-        # actual sampling frequencies
-        overall_smpl_freq = int(round(float(total_samples) * 1000) / total_run_time)
-        overall_scan_freq = overall_smpl_freq / self.n_ch
-        exp_smpl_freq = int(round(float(datacount_hold[1]) * 1000) / run_time)
-        exp_scan_freq = exp_smpl_freq / self.n_ch
+        if not self.hard_stopped:
+            # samples taken for each interval:
+            multiplier = self.packetsPerRequest * self.streamSamplesPerPacket
+            datacount_hold = (np.asarray(datacount_hold)) * multiplier
+            total_samples = sum(i for i in datacount_hold)
+            # total run times for each interval
+            before_run_time = time_diff(start_time=self.time_start_read, end_time=time_start, choice='micros')
+            run_time = time_diff(start_time=time_start, end_time=time_stop, choice='micros')
+            after_run_time = time_diff(start_time=time_stop, end_time=time_stop_read, choice='micros')
+            total_run_time = time_diff(start_time=self.time_start_read, end_time=time_stop_read, choice='micros')
+            # actual sampling frequencies
+            overall_smpl_freq = int(round(float(total_samples) * 1000) / total_run_time)
+            overall_scan_freq = overall_smpl_freq / self.n_ch
+            exp_smpl_freq = int(round(float(datacount_hold[1]) * 1000) / run_time)
+            exp_scan_freq = exp_smpl_freq / self.n_ch
 
     def data_write_plot(self):
-        """
-        Reads from queue and writes to file/plots
-        """
+        """Reads from data queue and writes to file/plots"""
         missed_total, missed_list = 0, []
-        save_file_name = '[name]-{}'.format(get_day(3))
+        save_file_name = '[name]--{}'.format(format_daytime(options='daytime'))
         with open(dirs.results_dir + save_file_name + '.csv', 'w') as save_file:
             for i in range(self.n_ch):
                 save_file.write('AIN{},'.format(self.ch_num[i]))
             save_file.write('\n')
-            self.read_lock.wait()  # wait for the go ahead from read_stream_data
-            self.report_queue.put_nowait('<ljmsg>Started Streaming.')
+            self.lj_read_ready_lock.wait()  # wait for the go ahead from read_stream_data
+            self.status_queue.put_nowait('<ljst>')
             while self.running:
-                try:
-                    if not self.running:
-                        break
-                    result = self.data.get(timeout=1)
-                    if result['errors'] != 0:
-                        missed_total += result['missed']
-                        missed_time = datetime.now()
-                        time_diff = get_time_diff(start_time=self.time_start_read,
-                                                  end_time=missed_time)
-                        missed_list.append([copy.deepcopy(result['missed']),
-                                            copy.deepcopy(float(time_diff) / 1000)])
-                    r = self.processStreamData(result['result'])
-                    for each in range(len(r['AIN{}'.format(self.ch_num[0])])):
-                        for i in range(self.n_ch):
-                            save_file.write(str(r['AIN{}'.format(self.ch_num[i])][each]) + ',')
-                        save_file.write('\n')
-                except Queue.Empty:
-                    print 'Empty Queue'
-                    self.running = False
+                if not self.running:
+                    self.data_queue.queue.clear()
                     break
+                result = self.data_queue.get()
+                if result['errors'] != 0:
+                    missed_total += result['missed']
+                    missed_time = datetime.now()
+                    timediff = time_diff(start_time=self.time_start_read,
+                                         end_time=missed_time)
+                    missed_list.append([deepcopy(result['missed']),
+                                        deepcopy(float(timediff) / 1000)])
+                r = self.processStreamData(result['result'])
+                for each in range(len(r['AIN{}'.format(self.ch_num[0])])):
+                    for i in range(self.n_ch):
+                        save_file.write(str(r['AIN{}'.format(self.ch_num[i])][each]) + ',')
+                    save_file.write('\n')
 
 
 class FireFly(object):
-    """firefly camera. run as daemoned thread"""
-
-    def __init__(self, exp_lock, report_queue):
-        self.context = fc2.Context()
-        self.context.connect(*self.context.get_camera_from_index(0))
-        self.context.set_video_mode_and_frame_rate(fc2.VIDEOMODE_640x480Y8,
-                                                   fc2.FRAMERATE_30)
-        self.context.set_property(**self.context.get_property(fc2.FRAME_RATE))
-        self.context.start_capture()
-        self.exp_lock = exp_lock
-        self.report_queue = report_queue
-        self.running = False
+    """firefly camera"""
+    def __init__(self, lj_exp_ready_lock, master_gui_queue, cmr_ready_lock, ard_ready_lock):
+        # Hardware parameters
+        self.context = None
+        # Threading controls
+        self.lj_exp_ready_lock = lj_exp_ready_lock
+        self.cmr_ready_lock = cmr_ready_lock
+        self.ard_ready_lock = ard_ready_lock
+        self.status_queue = master_gui_queue
+        self.data_queue = Queue.Queue()
+        ###############################################
+        self.connected = False
+        self.recording = False
+        self.hard_stopped = False
         self.frame = None
-        self.frame_give_queue = Queue.Queue()
 
-    def run(self):
+    def initialize(self):
+        """checks that camera is available"""
+        try:
+            self.context = fc2.Context()
+            self.context.connect(*self.context.get_camera_from_index(0))
+            self.context.set_video_mode_and_frame_rate(fc2.VIDEOMODE_640x480Y8,
+                                                       fc2.FRAMERATE_30)
+            self.context.set_property(**self.context.get_property(fc2.FRAME_RATE))
+            self.context.start_capture()
+            self.status_queue.put_nowait('<cmr>Connected to Camera!')
+            self.connected = True
+            return True
+        except fc2.ApiError:
+            self.status_queue.put_nowait('<cmr>** Camera is not connected or'
+                                         ' is occupied by another program. '
+                                         'Please disconnect and try again.')
+            self.connected = False
+            return False
+
+    def camera_run(self):
+        """Runs camera non-stop; switches image acquisition method
+        from tempImageGet to appendAVI when need to record video"""
+        while self.connected:
+            if not self.recording:
+                try:
+                    self.data_queue.put_nowait(self.context.tempImgGet())
+                except fc2.ApiError:
+                    if DEBUG:
+                        print 'Camera Closed. Code = IsoT'
+                        return
+            if self.recording:
+                self.record_video()
+            time.sleep(0.031)
+            if not self.connected:
+                # this means we stopped the experiment and are closing the GUI
+                self.close()
+
+    def record_video(self):
         """records video"""
-        self.context.set_strobe_mode(3, True, 1, 0, 10)
-        self.context.openAVI(dirs.results_dir + '[name] - {}.avi'.format(get_day(3)),
+        self.context.openAVI(dirs.results_dir + '[name]--{}.avi'.format(format_daytime(options='daytime')),
                              30, 1000000)
         num_frames = int(dirs.settings.ard_last_used['packet'][3] * 30) / 1000
-        self.exp_lock.wait()
-        self.report_queue.put_nowait('<cmrmsg>Started Recording.')
-        self.frame_give_queue.put_nowait('<begin>')
-        self.running = True
+        self.ard_ready_lock.wait()
+        self.cmr_ready_lock.set()
+        self.data_queue.put_nowait(self.context.tempImgGet())
+        self.lj_exp_ready_lock.wait()
+        # started recording
+        self.status_queue.put_nowait('<cmr>Started Recording.')
+        self.status_queue.put_nowait('<cmrst>')
+        self.context.set_strobe_mode(3, True, 1, 0, 10)
         for i in range(num_frames):
-            if self.running:
-                if i % 2 == 0:
-                    self.frame_give_queue.put_nowait(self.context.appendAVI())
-                else:
-                    self.context.appendAVI()
-            else:
-                self.frame_give_queue.put_nowait('<end>')
+            if self.recording:
+                self.data_queue.put_nowait(self.context.appendAVI())
+            elif not self.recording:
                 break
-        self.running = False
-        self.context.closeAVI()
+        self.recording = False
         self.context.set_strobe_mode(3, False, 1, 0, 10)
+        self.context.closeAVI()
+        self.cmr_ready_lock.clear()
+        if not self.hard_stopped:
+            self.status_queue.put_nowait('<cmr>Finished Successfully.')
+        elif self.hard_stopped:
+            self.status_queue.put_nowait('<cmr>Terminated Video Recording.')
+            self.hard_stopped = False
 
     def close(self):
         """closes camera instance"""
@@ -3240,20 +2973,227 @@ class FireFly(object):
         self.context.disconnect()
 
 
-#################################################################
-# Directories
-class Directories(object):
-    """
-    File Formats:
-    .frcl: Main Settings Pickle
-    .csv: Standard comma separated file for data output
-    """
+class ArduinoUno(object):
+    """Handles serial communication with arduino"""
+    def __init__(self, lj_exp_ready_lock, master_gui_queue, ard_ready_lock, cmr_ready_lock):
+        # Thread controls
+        self.lj_exp_ready_lock = lj_exp_ready_lock
+        self.ard_ready_lock = ard_ready_lock
+        self.cmr_ready_lock = cmr_ready_lock
+        self.status_queue = master_gui_queue
+        self.connected = False
+        self.running = False
+        self.hard_stopped = False
+        # Hardware parameters
+        self.baudrate = 115200
+        self.ser_port = dirs.settings.ser_port
+        # Communication protocols
+        # Markers are unicode chrs '<' and '>'
+        self.start_marker, self.end_marker = 60, 62
+        self.serial = None
 
-    def __init__(self, root):
-        self.root = root
+    def send_to_ard(self, send_str):
+        """Sends packed str to arduino"""
+        self.serial.write(send_str)
+
+    def get_from_ard(self):
+        """Reads serial data from arduino"""
+        ard_string = ''
+        byte_hold = 'z'
+        # We read and discard serial data until we hit '<'
+        while ord(byte_hold) != self.start_marker:
+            byte_hold = self.serial.read()
+            time.sleep(0.00001)
+        # Then we read and record serial data until we hit '>'
+        while ord(byte_hold) != self.end_marker:
+            if ord(byte_hold) != self.start_marker:
+                ard_string += byte_hold
+            byte_hold = self.serial.read()
+        return ard_string
+
+    def send_packets(self, *args):
+        """Send experiment config to arduino"""
+        for each in args:
+            for i in range(len(each)):
+                if len(each) > 0:
+                    try:
+                        get_str = self.get_from_ard()
+                        if get_str == 'M':
+                            self.send_to_ard(pack(*each[i]))
+                    except TypeError:
+                        raise serial.SerialException
+
+    @staticmethod
+    def list_serial_ports():
+        """Finds and returns all available and usable serial ports"""
+        if sys.platform.startswith('win'):
+            ports = ['COM%s' % (i + 1) for i in range(256)]
+        elif sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
+            ports = glob.glob('/dev/tty[A-Za-z]*')
+        elif sys.platform.startswith('darwin'):
+            ports = glob.glob('/dev/tty.*')
+        else:
+            raise EnvironmentError('Unsupported platform')
+        result = []
+        for port in ports:
+            try:
+                s = serial.Serial(port)
+                s.close()
+                result.append(port)
+            except (OSError, serial.SerialException):
+                pass
+        return result
+
+    def wait_for_ready(self):
+        """Wait for ready message from arduino"""
+        msg = ''
+        start = datetime.now()
+        while msg.find('ready') == -1:
+            while self.serial.inWaiting() == 0:
+                time.sleep(0.02)
+                timediff = time_diff(start)
+                if timediff > 3500:
+                    return False
+            msg = self.get_from_ard()
+        if msg == 'ready':
+            return True
+
+    def try_serial(self, port):
+        """Given a port, attempts to connect to it"""
+        try:
+            # can we use this port at all?
+            self.serial = serial.Serial(port, self.baudrate)
+            try:
+                # are we able to get the ready message from arduino?
+                success = self.wait_for_ready()
+                if success:
+                    dirs.threadsafe_edit(recipient='ser_port', donor=port)
+                    return True
+                else:
+                    return False
+            except IOError:
+                return False
+        except (serial.SerialException, IOError, OSError):
+            try:
+                self.serial.close()
+                self.serial = serial.Serial(port, self.baudrate)
+                try:
+                    # are we able to get the ready message from arduino?
+                    success = self.wait_for_ready()
+                    if success:
+                        dirs.threadsafe_edit(recipient='ser_port', donor=port)
+                        return True
+                    else:
+                        return False
+                except IOError:
+                    return False
+            except (serial.SerialException, IOError, OSError):
+                return False
+
+    def check_connection(self):
+        """Tries every possible serial port"""
+        # First we close any outstanding ports
+        try:
+            self.serial.close()
+        except AttributeError:
+            pass
+        # then we attempt a new connection
+        ports = self.list_serial_ports()
+        self.status_queue.put('<ard>Connecting to Port '
+                              '[{}]...'.format(self.ser_port))
+        self.connected = self.try_serial(self.ser_port)
+        if self.connected:
+            self.status_queue.put('<ard>Success! Connected to Port '
+                                  '[{}].'.format(self.ser_port))
+            self.connected = True
+            return
+        elif not self.connected:
+            for port in ports:
+                if self.try_serial(port):
+                    self.ser_port = port
+                    dirs.threadsafe_edit(recipient='ser_port', donor=port)
+                    self.status_queue.put('<ard>Success! Connected to Port '
+                                          '[{}].'.format(self.ser_port))
+                    self.connected = True
+                    return
+                else:
+                    self.status_queue.put('<ard>** Failed to connect. '
+                                          'Attempting next available Port...')
+            self.status_queue.put('<ard>** Arduino cannot be reached! '
+                                  'Please make sure the device '
+                                  'is plugged in.')
+            self.connected = False
+            return
+
+    def run_experiment(self):
+        """sends data packets and runs experiment"""
+        self.status_queue.put_nowait('<ard>Success! Connected to '
+                                     'Port [{}]. '
+                                     'Sending data '
+                                     'packets...'.format(self.ser_port))
+        system_time = ["<L", calendar.timegm(time.gmtime()) - TIME_OFFSET]
+        pwm_pack_send = []
+        for i in dirs.settings.ard_last_used['pwm_pack']:
+            period = (float(1000000) / float(i[4]))
+            cycleTimeOn = long(round(period * (float(i[7]) / float(100))))
+            cycleTimeOff = long(round(period * (float(1) - (float(i[7]) / float(100)))))
+            timePhaseShift = long(round(period * (float(i[6]) / float(360))))
+            pwm_pack_send.append(["<LLLLLBL", 0, i[2], i[3], cycleTimeOn, cycleTimeOff,
+                                  i[5], timePhaseShift])
+        self.send_packets([system_time],
+                          [dirs.settings.ard_last_used['packet']],
+                          dirs.settings.ard_last_used['tone_pack'],
+                          dirs.settings.ard_last_used['out_pack'],
+                          pwm_pack_send)
+        self.status_queue.put_nowait('<ard>Success! Connected to '
+                                     'Port [{}]. '
+                                     'Data packets sent'.format(self.ser_port))
+        # we're done the bulk of the processing, now we wait for thread stuff
+        # this order is very specific! do not modify
+        self.ard_ready_lock.set()
+        self.cmr_ready_lock.wait()
+        self.lj_exp_ready_lock.wait()
+        self.send_to_ard(pack("<B", 1))
+        start = datetime.now()
+        self.status_queue.put_nowait('<ard>Started Procedure.')
+        self.status_queue.put_nowait('<ardst>')
+        total_time = dirs.settings.ard_last_used['packet'][3]
+        self.running = True
+        while self.running:
+            if not self.running:
+                break
+            if time_diff(start) >= total_time:
+                end_msg = self.get_from_ard()
+                end_msg = end_msg.split(',')
+                self.status_queue.put_nowait('<ard>Finished. Hardware report: '
+                                             'procedure was exactly [{} ms], '
+                                             'from [{}] to [{}]'
+                                             ''.format(end_msg[0], end_msg[1], end_msg[2]))
+                self.running = False
+                break
+            time.sleep(0.1)
+        self.running = False
+        if self.hard_stopped:
+            self.status_queue.put_nowait('<ard>Terminated Procedure.')
+            self.hard_stopped = False
+        self.serial.close()
+        self.serial.open()
+        self.serial.close()
+        self.ard_ready_lock.clear()
+
+
+#################################################################
+# Directories and Saves
+class Directories(object):
+    """File Formats:
+    .frcl: Main Settings Pickle
+    .csv: Standard comma separated file for data output"""
+    def __init__(self):
+        self.lock = threading.Lock()
         self.user_home = os.path.expanduser('~')
         self.main_save_dir = self.user_home + '/desktop/frCntrlSaves/'
         self.results_dir = ''
+        self.save_on_exit = True
         self.settings = MainSettings()
         if not os.path.isfile(self.user_home + '/frSettings.frcl'):
             # Create Settings file if does not exist
@@ -3265,55 +3205,52 @@ class Directories(object):
             os.makedirs(self.main_save_dir)
 
     def load(self):
-        """
-        Load last used settings
-        """
+        """Load last used settings"""
         with open(self.user_home + '/frSettings.frcl', 'rb') as settings_file:
             self.settings = pickle.load(settings_file)
-            self.settings.check_dirs()
+            self.check_dirs()
 
     def save(self):
-        """
-        Save settings for future use.
-        """
-        with open(dirs.user_home + '/frSettings.frcl', 'wb') as settings_file:
+        """Save settings for future use"""
+        with open(self.user_home + '/frSettings.frcl', 'wb') as settings_file:
             pickle.dump(self.settings, settings_file)
 
-    def clear_saves(self, root_reference):
-        """
-        Removes all settings and save directories.
-        """
-        global SAVE_ON_EXIT
-        if tkMb.askyesno('Warning!',
-                         'This DELETES all settings, presets, '
-                         'and data output saves!\n'
-                         'It should be used for '
-                         'debugging purposes only.\n\n'
-                         'Are you sure?',
-                         default='no',
-                         parent=self.root):
-            shutil.rmtree(self.user_home + '/desktop/frCntrlSaves/')
-            os.remove(self.user_home + '/frSettings.frcl')
-            time.sleep(0.5)
-            tkMb.showinfo('Finished',
-                          'All Settings and Save Directories Deleted.\n'
-                          'Program will now exit.',
-                          parent=self.root)
-            SAVE_ON_EXIT = False
-            root_reference.destroy()
-            root_reference.quit()
+    def check_dirs(self):
+        """Creates a save directory named in our Last Used Dir. records
+        if that directory does not exist"""
+        if self.settings.save_dir != '':
+            if not os.path.isdir(self.main_save_dir + self.settings.save_dir):
+                os.makedirs(self.main_save_dir + self.settings.save_dir)
+
+    def clear_saves(self):
+        """Removes settings and save directories"""
+        shutil.rmtree(self.user_home + '/desktop/frCntrlSaves/')
+        os.remove(self.user_home + '/frSettings.frcl')
+
+    def threadsafe_edit(self, recipient, donor, name=None):
+        """Edits settings in a threadsafe manner"""
+        self.lock.acquire()
+        if recipient == 'ser_port':
+            self.settings.ser_port = donor
+        elif recipient == 'save_dir':
+            self.settings.save_dir = donor
+        elif recipient == 'fp_last_used':
+            self.settings.fp_last_used = donor
+        elif recipient == 'lj_last_used':
+            self.settings.lj_last_used = donor
+        elif recipient == 'ard_last_used':
+            self.settings.ard_last_used = donor
+        elif recipient == 'lj_presets':
+            self.settings.lj_presets[name] = donor
+        elif recipient == 'ard_presets':
+            self.settings.ard_presets[name] = donor
+        else:
+            raise AttributeError('Settings has no attribute called {}!'.format(recipient))
+        self.lock.release()
 
 
-#################################################################
-# Main Settings
 class MainSettings(object):
-    """
-    Only call this if and only if settings.frcl does not exist
-    Otherwise we use pickle.load(settings.frcl) to create
-    a MainSettings singleton.
-    Object saves and holds all relevant parameters and presets
-    """
-
+    """Object saves and holds all relevant parameters and presets"""
     def __init__(self):
         self.ser_port = ''
         self.save_dir = ''
@@ -3330,20 +3267,17 @@ class MainSettings(object):
         self.ard_presets = {}
 
     def load_examples(self):
-        """
-        Example settings
-        """
+        """Example settings"""
         if sys.platform.startswith('win'):
             self.ser_port = 'COM1'
         else:
             self.ser_port = '/dev/tty.usbmodem1421'
-        self.save_dir = ''
         self.fp_last_used = {'ch_num': [3, 4, 5],
                              'main_freq': 211,
                              'isos_freq': 531}
         self.lj_last_used = {'ch_num': [0, 1, 2],
                              'scan_freq': 6250}
-        self.ard_last_used = {'packet': ['', 0, 0, 0, 0, 0, 0],
+        self.ard_last_used = {'packet': ['<BBLHHH', 0, 0, 20000, 0, 0, 0],
                               'tone_pack': [],
                               'out_pack': [],
                               'pwm_pack': []}
@@ -3356,52 +3290,29 @@ class MainSettings(object):
                              'out_pack': [['<LB', 148000, 4], ['<LB', 150000, 4]],
                              'pwm_pack': []}}
 
-    def check_dirs(self):
-        """
-        Creates a save directory named in our Last Used Dir. records
-        if that directory does not exist
-        :return:
-            None
-        """
-        if self.save_dir != '':
-            if not os.path.isdir(dirs.main_save_dir + self.save_dir):
-                os.makedirs(dirs.main_save_dir + self.save_dir)
-
     def quick_ard(self):
         """
         Quickly returns all Arduino parameters
-        :return:
-            List
         """
-        return [
-            self.ard_last_used['packet'],
-            self.ard_last_used['tone_pack'],
-            self.ard_last_used['out_pack'],
-            self.ard_last_used['pwm_pack']
-        ]
+        return [self.ard_last_used['packet'],
+                self.ard_last_used['tone_pack'],
+                self.ard_last_used['out_pack'],
+                self.ard_last_used['pwm_pack']]
 
     def quick_lj(self):
         """
         Quickly return all LabJack parameters
-        :return:
-            List
         """
-        return [
-            self.lj_last_used['ch_num'],
-            self.lj_last_used['scan_freq']
-        ]
+        return [self.lj_last_used['ch_num'],
+                self.lj_last_used['scan_freq']]
 
     def quick_fp(self):
         """
         Quickly return all Photometry parameters
-        :return:
-            List
         """
-        return [
-            self.fp_last_used['ch_num'],
-            self.fp_last_used['main_freq'],
-            self.fp_last_used['isos_freq']
-        ]
+        return [self.fp_last_used['ch_num'],
+                self.fp_last_used['main_freq'],
+                self.fp_last_used['isos_freq']]
 
 
 #################
@@ -3425,9 +3336,10 @@ class ServoDrive(object):
 class Example(Tk.Frame):
     """s"""
     def __init__(self, *args, **kwargs):
+        # noinspection PyTypeChecker,PyCallByClass
         Tk.Frame.__init__(self, *args, **kwargs)
         self.servo = ServoDrive()
-        self.canvas = Tk.Canvas(self, background="black", height=216, width=288)
+        self.canvas = Tk.Canvas(self, background="#EFEFEF", height=216, width=288)
         self.canvas.pack(side="top", fill="both", expand=True)
 
         # create lines for velocity and torque
@@ -3462,19 +3374,18 @@ class Example(Tk.Frame):
 if __name__ == '__main__':
 
     # Open Tkinter instance
-    tcl_root = Tk.Tk()
+    tcl_main_root = Tk.Tk()
 
     # Setup all Directories
-    dirs = Directories(tcl_root)
-
+    dirs = Directories()
     # Load last used settings
     dirs.load()
 
     # Run Main Loop
-    main = MasterGUI(tcl_root)
+    main = MasterGUI(tcl_main_root)
     main.master.mainloop()
 
     # Save Settings for Next Run
-    if SAVE_ON_EXIT:
+    if dirs.save_on_exit:
         dirs.save()
 #################################################################

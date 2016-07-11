@@ -109,15 +109,14 @@ void setup(){
   //#######################################
   //Setting up SERIAL
   Serial.begin(115200);
-  //BEFOR STARTING, PINS SHOULD BE LOW
-   LED_START_FLASHES = 0
+  //BEFORE STARTING, PINS SHOULD BE LOW
    DDRD = 255;
    DDRB = 255;
    PORTD = B0;
    PORTB = B0;
    digitalWrite(13,LOW);
   //READY TO BEGIN RECEIVING DATA
-  Serial.println("<Arduino is ready>>");
+  Serial.print("<ready>");
   //#######################################
   //GET THE TIME
   requestData();

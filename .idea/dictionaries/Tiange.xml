@@ -1,16 +1,37 @@
 <component name="ProjectDictionaryState">
   <dictionary name="Tiange">
     <words>
+      <w>ardend</w>
+      <w>ardoff</w>
+      <w>ardon</w>
+      <w>ardst</w>
+      <w>cmrend</w>
+      <w>cmroff</w>
+      <w>cmron</w>
+      <w>cmrst</w>
       <w>combinable</w>
       <w>coords</w>
       <w>datacount</w>
+      <w>dayformat</w>
       <w>ggplot</w>
+      <w>hardstop</w>
       <w>imgs</w>
+      <w>kinter</w>
+      <w>ljend</w>
+      <w>ljoff</w>
+      <w>ljon</w>
+      <w>ljst</w>
       <w>lllllbl</w>
       <w>matplot</w>
       <w>smpl</w>
+      <w>statustext</w>
+      <w>subthread</w>
+      <w>succ</w>
+      <w>threadcount</w>
+      <w>threadsafe</w>
       <w>tiange</w>
       <w>timediff</w>
+      <w>timeformat</w>
     </words>
   </dictionary>
 </component>
