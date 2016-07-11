@@ -29,6 +29,7 @@ import flycapture2a as fc2
 import tkMessageBox as tkMb
 from PIL.ImageTk import Image, PhotoImage
 from LabJackPython import LowlevelErrorException, LabJackException
+
 ################################################################
 # To do list:
 # - Arduino GUI Geometry fine tuning
@@ -39,7 +40,7 @@ from LabJackPython import LowlevelErrorException, LabJackException
 #################################################################
 # Global Variables
 TIME_OFFSET = 3600 * 4
-DEBUG = True
+DEBUG = False
 
 
 # Misc. Functions
@@ -145,6 +146,7 @@ def check_binary(num, register):
 # GUIs
 class ScrollFrame(object):
     """Produces a scrollable canvas item"""
+
     def __init__(self, master, num_args, rows, bottom_padding=0):
         self.root = master
         self.rows = rows
@@ -183,6 +185,7 @@ class ScrollFrame(object):
 
 class ProgressBar(object):
     """Creates a dynamic progress bar"""
+
     def __init__(self, master, canvas, bar, time_gfx, ms_total_time):
         self.master = master
         self.canvas = canvas
@@ -234,8 +237,45 @@ class ProgressBar(object):
         self.running = False
 
 
+# noinspection PyClassicStyleClass,PyTypeChecker
+class SimpleTable(Tk.Frame):
+    """Creates a table with defined rows and columns
+    modifiable via a set command"""
+    # noinspection PyCallByClass
+    def __init__(self, master, rows, columns, highlight_column, highlight_color):
+        Tk.Frame.__init__(self, master, background="black")
+        self.text_var = deepcopy_lists(rows, columns, Tk.StringVar)
+        for row in range(rows):
+            for column in range(columns):
+                if column == highlight_column:
+                    label = Tk.Label(self, textvariable=self.text_var[row][column],
+                                     borderwidth=0, width=12, height=2,
+                                     text=tkFont.Font(family='Arial', size=8),
+                                     bg=highlight_color)
+                else:
+                    label = Tk.Label(self, textvariable=self.text_var[row][column],
+                                     borderwidth=0, width=12, height=2,
+                                     text=tkFont.Font(family='Arial', size=8))
+                label.grid(row=row, column=column, sticky='nsew', padx=1, pady=1)
+                self.text_var[row][column].set('')
+        for column in range(columns):
+            self.grid_columnconfigure(column, weight=1)
+
+    def set_var(self, row, column, value):
+        """sets a specific box to specified value"""
+        item = self.text_var[row][column]
+        item.set(value)
+
+    def clear(self):
+        """clears fields"""
+        for row in range(len(self.text_var) - 1):
+            for column in range(len(self.text_var[row]) - 1):
+                self.text_var[row + 1][column + 1].set('')
+
+
 class GUI(object):
     """Standard TKinter GUI"""
+
     def __init__(self, tcl_root, topmost=True):
         self.root = tcl_root
         self.root.resizable(width=False, height=False)
@@ -244,6 +284,7 @@ class GUI(object):
         self.hard_closed = False
         if topmost:
             self.root.wm_attributes("-topmost", True)
+        self.root.focus_force()
 
     def hard_exit(self):
         """Destroy all instances of the window
@@ -290,6 +331,7 @@ class PhotometryGUI(GUI):
           are appended to aid in Lock-In Analysis
     Options appended: - Channels Used and associated Data column
                       - Sample stimulation frequencies (primary and isosbestic)"""
+
     def __init__(self, master):
         GUI.__init__(self, master)
         self.root.title('Photometry Configuration')
@@ -333,7 +375,7 @@ class PhotometryGUI(GUI):
                                                    text=str(i), value=i,
                                                    variable=self.radio_button_vars[frame],
                                                    command=lambda (button_var, index)
-                                                          =(self.radio_button_vars[frame], frame):
+                                                                  =(self.radio_button_vars[frame], frame):
                                                    self.select_button(button_var, index))
                 buttons[frame][i].pack(side=Tk.LEFT)
 
@@ -396,6 +438,7 @@ class PhotometryGUI(GUI):
 
 class LabJackGUI(GUI):
     """GUI for LabJack configuration"""
+
     def __init__(self, master):
         GUI.__init__(self, master)
         self.root.title('LabJack Configuration')
@@ -441,6 +484,7 @@ class LabJackGUI(GUI):
         self.preset_menu = Tk.OptionMenu(preset_frame, self.preset_chosen,
                                          *self.preset_list,
                                          command=self.preset_list_choose)
+        self.preset_menu.config(width=20)
         self.preset_menu.pack(side=Tk.TOP)
         # Save New Presets
         new_preset_frame = Tk.LabelFrame(right_frame, text='(Optional): '
@@ -608,6 +652,7 @@ class ArduinoGUI(GUI):
     """Arduino settings config. Settings are saved to
     dirs.settings object, which is pulled by the arduino at
     experiment start"""
+
     def __init__(self, master):
         GUI.__init__(self, master)
         self.types = ''
@@ -1310,14 +1355,16 @@ class MasterGUI(GUI):
     Note on queues: do NOT process GUI objects in separate threads
     (e.g. PhotoImages, Canvas items, etc) even if they can be sent through queues.
         this WILL cause crashes under load or unexpected circumstances."""
+
     def __init__(self, master):
         GUI.__init__(self, master, topmost=False)
         self.master = self.root
-        self.master.title('Fear Control')
+        self.master.title('Freeze Frame Clone')
         # Fonts
         self.time_label_font = tkFont.Font(family='Arial', size=8)
         self.label_font = tkFont.Font(family='Arial', size=10)
         self.label_font_symbol = tkFont.Font(family='Arial', size=9)
+        self.main_button_font = tkFont.Font(family='Arial', size=10, weight='bold')
         # Widget Configs
         self.single_widget_dim = 100
         # noinspection PyUnresolvedReferences
@@ -1411,7 +1458,7 @@ class MasterGUI(GUI):
                                                *self.save_dir_list,
                                                command=lambda path:
                                                self.save_button_options(inputs=path))
-        self.save_dir_menu.config(width=39)
+        self.save_dir_menu.config(width=40)
         self.save_dir_menu.grid(sticky=self.ALL, columnspan=2)
         # 2b. Secondary Save Frame: New Saves
         new_frame = Tk.LabelFrame(frame, text='Create a New Save Location')
@@ -1446,10 +1493,13 @@ class MasterGUI(GUI):
                                           command=self.lj_config)
         self.lj_config_button.pack(side=Tk.BOTTOM, expand=True)
         # Post experiment LabJack report frame
-        report_frame = Tk.LabelFrame(self.master, text='Post Experiment LabJack Report')
+        report_frame = Tk.LabelFrame(self.master, text='LabJack Stream Data')
         report_frame.grid(row=3, column=1, sticky=self.ALL)
-        Example(report_frame).grid(row=0, column=0, sticky=self.ALL)
-        Example(report_frame).grid(row=0, column=1, sticky=self.ALL)
+        Tk.Label(report_frame, text='Post Experiment Report').grid(row=0, column=2, sticky=self.ALL)
+        self.lj_table = SimpleTable(report_frame, 6, 5, highlight_column=2, highlight_color='#72ab97')
+        self.lj_table.grid(row=1, column=2, sticky=self.ALL)
+        self.lj_report_table_config()
+        Example(report_frame).grid(row=0, column=0, columnspan=2, rowspan=1000, sticky=self.ALL)
 
     def render_arduino(self):
         """Sets up the main progress bar, arduino config buttons,
@@ -1463,8 +1513,8 @@ class MasterGUI(GUI):
         ard_frame.grid(row=0, rowspan=3, column=1, sticky=self.ALL)
         Tk.Label(ard_frame,
                  text='Last used settings shown. '
-                      'Click then rollover individual segments for '
-                      'specific stimuli config information.',
+                      'Rollover individual segments for '
+                      'specific stimuli configuration info.',
                  relief=Tk.RAISED).grid(row=0, columnspan=55, sticky=self.ALL)
         # Debug Buttons
         self.debug_button = Tk.Button(ard_frame, text='DEBUG',
@@ -1473,15 +1523,22 @@ class MasterGUI(GUI):
         self.clr_svs_button = Tk.Button(ard_frame, text='ClrSvs',
                                         command=self.clear_saves)
         self.clr_svs_button.grid(row=0, column=90, columnspan=10, sticky=self.ALL)
+        self.debug_chk_var = Tk.IntVar()
+        self.debug_chk_var.set(0)
+        Tk.Checkbutton(ard_frame, text='', variable=self.debug_chk_var,
+                       command=self.debug_printing, onvalue=1,
+                       offvalue=0).grid(row=0, column=79, sticky=Tk.E)
         # Main Progress Canvas
         self.ard_canvas = Tk.Canvas(ard_frame, width=1050, height=self.ard_bckgrd_height + 10)
         self.ard_canvas.grid(row=1, column=0, columnspan=100)
         self.gui_canvas_initialize()
         # Progress Bar Control Buttons
-        self.prog_on = Tk.Button(ard_frame, text='START')
-        self.prog_on.grid(row=5, column=4, stick=self.ALL)
-        self.prog_off = Tk.Button(ard_frame, text='STOP')
-        self.prog_off.grid(row=5 + 1, column=4, stick=self.ALL)
+        self.prog_on = Tk.Button(ard_frame, text='START', bg='#99ccff',
+                                 font=self.main_button_font)
+        self.prog_on.grid(row=5, column=2, columnspan=3, stick=self.ALL)
+        self.prog_off = Tk.Button(ard_frame, text='STOP', bg='#ff9999',
+                                  font=self.main_button_font)
+        self.prog_off.grid(row=5, column=5, stick=self.ALL)
         self.prog_on.config(command=self.progbar_run)
         self.prog_off.config(state=Tk.DISABLED,
                              command=self.progbar_stop)
@@ -1490,33 +1547,38 @@ class MasterGUI(GUI):
         # Arduino Presets
         self.ard_update_preset_list()
         self.ard_preset_chosen_var = Tk.StringVar()
-        self.ard_preset_chosen_var.set('{: <50}'.format('(select a preset)'))
+        self.ard_preset_chosen_var.set('{: <20}'.format('(select a preset)'))
         self.ard_preset_menu = Tk.OptionMenu(ard_frame,
                                              self.ard_preset_chosen_var,
                                              *self.ard_preset_list,
                                              command=lambda file_in:
                                              self.ard_grab_data(True, file_in))
-        self.ard_preset_menu.grid(row=7, column=0, columnspan=5, sticky=self.ALL)
+        self.ard_preset_menu.config(width=20)
+        self.ard_preset_menu.grid(row=7, column=0, columnspan=2, sticky=self.ALL)
+        self.preset_save_button = Tk.Button(ard_frame, text='Save as New Preset', command=self.save_new_preset)
+        self.preset_save_button.grid(row=7, column=2, columnspan=4, sticky=self.ALL)
+        self.preset_save_entry = Tk.Entry(ard_frame)
+        self.preset_save_entry.grid(row=6, column=2, columnspan=4, sticky=self.ALL)
         # Manual Arduino Setup
         # Total Experiment Time Config
         Tk.Label(ard_frame, text='MM',
-                 font=self.time_label_font).grid(row=3, column=1, sticky=self.ALL)
+                 font=self.time_label_font).grid(row=3, column=2, sticky=self.ALL)
         Tk.Label(ard_frame, text='SS',
-                 font=self.time_label_font).grid(row=3, column=3, sticky=self.ALL)
+                 font=self.time_label_font).grid(row=3, column=4, sticky=self.ALL)
         Tk.Label(ard_frame,
-                 text='Total Experiment Time:').grid(row=3 + 1, column=0, sticky=self.ALL)
+                 text='Total Experiment Time:').grid(row=3 + 1, column=0, columnspan=2, sticky=self.ALL)
         # Minutes
         self.min_entry = Tk.Entry(ard_frame, width=2)
-        self.min_entry.grid(row=3 + 1, column=1, sticky=self.ALL)
+        self.min_entry.grid(row=3 + 1, column=2, sticky=self.ALL)
         self.min_entry.insert(Tk.END, '{}'.format(format_secs(self.ttl_time / 1000, option='min')))
-        Tk.Label(ard_frame, text=':').grid(row=3 + 1, column=2, sticky=self.ALL)
+        Tk.Label(ard_frame, text=':').grid(row=3 + 1, column=3, sticky=self.ALL)
         # Seconds
         self.sec_entry = Tk.Entry(ard_frame, width=2)
-        self.sec_entry.grid(row=3 + 1, column=3, sticky=self.ALL)
+        self.sec_entry.grid(row=3 + 1, column=4, sticky=self.ALL)
         self.sec_entry.insert(Tk.END, '{}'.format(format_secs(self.ttl_time / 1000, option='sec')))
         self.ard_time_confirm_button = Tk.Button(ard_frame, text='Confirm',
                                                  command=self.ard_get_time)
-        self.ard_time_confirm_button.grid(row=3 + 1, column=4, sticky=self.ALL)
+        self.ard_time_confirm_button.grid(row=3 + 1, column=5, sticky=self.ALL)
         # Stimuli Config
         self.tone_setup_button = Tk.Button(ard_frame, text='Tone Setup',
                                            command=lambda types='tone':
@@ -1525,7 +1587,7 @@ class MasterGUI(GUI):
         self.out_setup_button = Tk.Button(ard_frame, text='Simple\nOutputs',
                                           command=lambda types='output':
                                           self.ard_config(types))
-        self.out_setup_button.grid(row=5, rowspan=2, column=1, columnspan=3, sticky=self.ALL)
+        self.out_setup_button.grid(row=5, rowspan=2, column=1, columnspan=1, sticky=self.ALL)
         self.pwm_setup_button = Tk.Button(ard_frame, text='PWM Setup',
                                           command=lambda types='pwm':
                                           self.ard_config(types))
@@ -1537,65 +1599,65 @@ class MasterGUI(GUI):
         # arduino
         self.ard_status_bar = Tk.StringVar()
         Tk.Label(ard_frame, anchor=Tk.E, text='Arduino Status:  ').grid(row=4, column=10,
-                                                                        columnspan=15,
-                                                                        sticky=self.ALL)
+                                                                        columnspan=20,
+                                                                        sticky=Tk.E)
         ard_status_display = Tk.Label(ard_frame, anchor=Tk.W,
                                       textvariable=self.ard_status_bar,
                                       relief=Tk.SUNKEN)
-        ard_status_display.grid(row=4, column=25, columnspan=70, sticky=self.ALL)
+        ard_status_display.grid(row=4, column=30, columnspan=68, sticky=self.ALL)
         self.ard_status_bar.set('null')
         self.ard_toggle_var = Tk.IntVar()
         self.ard_toggle_var.set(1)
         self.ard_toggle_button = Tk.Checkbutton(ard_frame, variable=self.ard_toggle_var, text='Arduino',
                                                 onvalue=1, offvalue=0, command=lambda:
-                                                self.device_status_msg_toggle(self.ard_toggle_var,
-                                                                              self.ard_status_bar,
-                                                                              ard_status_display,
-                                                                              name='ard'))
+            self.device_status_msg_toggle(self.ard_toggle_var,
+                                          self.ard_status_bar,
+                                          ard_status_display,
+                                          name='ard'))
         self.ard_toggle_button.grid(row=0, column=70, sticky=Tk.E)
         # LabJack
         self.lj_status_bar = Tk.StringVar()
         Tk.Label(ard_frame, anchor=Tk.E, text='LabJack Status:  ').grid(row=5, column=10,
-                                                                        columnspan=15,
-                                                                        sticky=self.ALL)
+                                                                        columnspan=20,
+                                                                        sticky=Tk.E)
         lj_status_display = Tk.Label(ard_frame, anchor=Tk.W,
                                      textvariable=self.lj_status_bar,
                                      relief=Tk.SUNKEN)
-        lj_status_display.grid(row=5, column=25, columnspan=70, sticky=self.ALL)
+        lj_status_display.grid(row=5, column=30, columnspan=68, sticky=self.ALL)
         self.lj_status_bar.set('null')
         self.lj_toggle_var = Tk.IntVar()
         self.lj_toggle_var.set(1)
         self.lj_toggle_button = Tk.Checkbutton(ard_frame, variable=self.lj_toggle_var, text='LabJack',
                                                onvalue=1, offvalue=0, command=lambda:
-                                               self.device_status_msg_toggle(self.lj_toggle_var,
-                                                                             self.lj_status_bar,
-                                                                             lj_status_display,
-                                                                             name='lj'))
+            self.device_status_msg_toggle(self.lj_toggle_var,
+                                          self.lj_status_bar,
+                                          lj_status_display,
+                                          name='lj'))
         self.lj_toggle_button.grid(row=0, column=72, sticky=Tk.E)
         # Camera
         self.cmr_status_bar = Tk.StringVar()
-        Tk.Label(ard_frame, anchor=Tk.E, text='Camera Status: ').grid(row=6, column=10,
-                                                                      columnspan=15, sticky=self.ALL)
+        Tk.Label(ard_frame, anchor=Tk.E, text='Camera Status:  ').grid(row=6, column=10,
+                                                                       columnspan=20, sticky=Tk.E)
         cmr_status_display = Tk.Label(ard_frame, anchor=Tk.W, textvariable=self.cmr_status_bar,
                                       relief=Tk.SUNKEN)
-        cmr_status_display.grid(row=6, column=25, columnspan=70, sticky=self.ALL)
+        cmr_status_display.grid(row=6, column=30, columnspan=68, sticky=self.ALL)
         self.cmr_status_bar.set('null')
         self.cmr_toggle_var = Tk.IntVar()
         self.cmr_toggle_var.set(1)
         self.cmr_toggle_button = Tk.Checkbutton(ard_frame, variable=self.cmr_toggle_var, text='Camera',
                                                 onvalue=1, offvalue=0, command=lambda:
-                                                self.device_status_msg_toggle(self.cmr_toggle_var,
-                                                                              self.cmr_status_bar,
-                                                                              cmr_status_display,
-                                                                              name='cmr'))
+            self.device_status_msg_toggle(self.cmr_toggle_var,
+                                          self.cmr_status_bar,
+                                          cmr_status_display,
+                                          name='cmr'))
         self.cmr_toggle_button.grid(row=0, column=74, sticky=Tk.E)
         # Save Status
         self.save_status_bar = Tk.StringVar()
-        Tk.Label(ard_frame, anchor=Tk.E, text='Save Status: ').grid(row=7, column=10,
-                                                                    columnspan=15, sticky=self.ALL)
+        Tk.Label(ard_frame, anchor=Tk.E, text='Save Status:  ').grid(row=7, column=10,
+                                                                     columnspan=20, sticky=Tk.E)
         save_status_display = Tk.Label(ard_frame, anchor=Tk.W, textvariable=self.save_status_bar,
                                        relief=Tk.SUNKEN)
-        save_status_display.grid(row=7, column=25, columnspan=70, sticky=self.ALL)
+        save_status_display.grid(row=7, column=30, columnspan=68, sticky=self.ALL)
         self.save_status_bar.set('null')
 
     def gui_canvas_initialize(self):
@@ -1683,6 +1745,18 @@ class MasterGUI(GUI):
         self.ard_canvas.create_text(1027 + 6, 235 + 10,
                                     text='13', fill='white')
 
+    def lj_report_table_config(self):
+        """sets up a simple table for reporting lj stats"""
+        self.lj_table.set_var(0, 1, 'Before')
+        self.lj_table.set_var(0, 2, 'During')
+        self.lj_table.set_var(0, 3, 'After')
+        self.lj_table.set_var(0, 4, 'Total')
+        self.lj_table.set_var(1, 0, 'Time (s)')
+        self.lj_table.set_var(2, 0, 'Smpls Taken')
+        self.lj_table.set_var(3, 0, 'Smpls Missed')
+        self.lj_table.set_var(4, 0, 'Smpl Freq (Hz)')
+        self.lj_table.set_var(5, 0, 'Scan Freq (Hz)')
+
     def render_camera(self):
         """sets up camera feed"""
         frame = Tk.LabelFrame(self.master, text='Camera Feed')
@@ -1738,8 +1812,19 @@ class MasterGUI(GUI):
             elif msg in ['<ljst>', '<ardst>', '<cmrst>']:
                 if not self.progbar_started:
                     self.progbar.start()
+                    self.progbar_started = True
                 elif self.progbar_started:
                     pass
+            elif msg.startswith('<ljr>'):
+                msg = msg[5:].split(',')
+                for row in range(5):
+                    for column in range(4):
+                        self.lj_table.set_var(row=row + 1, column=column + 1,
+                                          value=msg[row * 4 + column])
+                        time.sleep(0.001)
+            elif msg.startswith('<ljm>'):
+                msg = msg[5:]
+                self.lj_table.set_var(row=3, column=4, value=msg)
         except Queue.Empty:
             pass
         self.master.after(50, self.gui_event_loop)
@@ -1756,6 +1841,14 @@ class MasterGUI(GUI):
         threads = threading.enumerate()
         for thread_index in range(len(threads)):
             print '    {} - {}'.format(thread_index, threads[thread_index].name)
+
+    def debug_printing(self):
+        """more debug messages"""
+        global DEBUG
+        if self.debug_chk_var.get() == 1:
+            DEBUG = True
+        else:
+            DEBUG = False
 
     def hard_exit(self, allow=True):
         """Handles devices before exiting for a clean close"""
@@ -1909,7 +2002,7 @@ class MasterGUI(GUI):
             dirs.settings.lj_last_used['ch_num'].sort()
             self.lj_status_var.set('Channels:\n{}\n'
                                    '\nScan Freq: [{}Hz]'.format(dirs.settings.lj_last_used['ch_num'],
-                                                             dirs.settings.lj_last_used['scan_freq']))
+                                                                dirs.settings.lj_last_used['scan_freq']))
             self.fp_config_button.config(state=Tk.DISABLED)
             self.fp_statustext_var.set('\n[N/A]\n')
 
@@ -1953,6 +2046,38 @@ class MasterGUI(GUI):
 
     # Arduino GUI Functions
     #####################################################################
+    def save_new_preset(self):
+        """Saves current settings in a new preset"""
+        preset_list = [d for d in dirs.settings.ard_presets]
+        preset_name = self.preset_save_entry.get().strip().lower()
+        if len(preset_name) == 0:
+            tkMb.showerror('Error!', 'You must give your preset a name.',
+                           parent=self.master)
+            self.preset_save_entry.focus()
+        else:
+            if preset_name not in preset_list:
+                to_save = deepcopy(dirs.settings.ard_last_used)
+                dirs.threadsafe_edit(recipient='ard_presets', donor=to_save,
+                                     name=preset_name)
+                menu = self.ard_preset_menu.children['menu']
+                menu.add_command(label=preset_name, command=lambda name=preset_name:
+                self.ard_grab_data(True, name))
+                self.ard_preset_chosen_var.set(preset_name)
+                tkMb.showinfo('Saved!', 'Preset saved as '
+                                        '[{}]'.format(preset_name),
+                              parent=self.master)
+            elif preset_name in preset_list:
+                if tkMb.askyesno('Overwrite?', '[{}] already exists as '
+                                               'a preset. Overwrite it '
+                                               'anyway?'.format(preset_name),
+                                 parent=self.master):
+                    to_save = deepcopy(dirs.settings.ard_last_used)
+                    dirs.threadsafe_edit(recipient='ard_presets', donor=to_save,
+                                         name=preset_name)
+                    tkMb.showinfo('Saved!', 'Preset saved as '
+                                            '[{}]'.format(preset_name),
+                                  parent=self.master)
+
     def ard_config(self, types):
         """Presents the requested Arduino GUI"""
         config = Tk.Toplevel(self.master)
@@ -2029,6 +2154,10 @@ class MasterGUI(GUI):
                                         'Reconfigure your stimuli if you wish to'
                                         ' reduce total '
                                         'time further.'.format(mins, secs))
+                self.min_entry.delete(0, Tk.END)
+                self.min_entry.insert(Tk.END, '{:0>2}'.format(mins))
+                self.sec_entry.delete(0, Tk.END)
+                self.sec_entry.insert(Tk.END, '{:0>2}'.format(secs))
             dirs.settings.ard_last_used['packet'][3] = self.ttl_time
             self.ard_grab_data(destroy=True)
         except ValueError:
@@ -2054,6 +2183,7 @@ class MasterGUI(GUI):
                                                                   option='min')))
             self.sec_entry.insert(Tk.END, '{}'.format(format_secs(last_used_time,
                                                                   option='sec')))
+            self.ard_preset_chosen_var.set(load)
         if destroy:
             self.ard_canvas.delete(self.progress_shape)
             self.ard_canvas.delete(self.progress_text)
@@ -2273,6 +2403,7 @@ class MasterGUI(GUI):
     def progbar_run(self):
         """Check if valid settings, make directories, and start progress bar"""
         # Check folders are available
+        self.lj_table.clear()
         if len(self.save_dir_list) == 0 and len(self.results_dir_used) == 0 and dirs.settings.save_dir == '':
             tkMb.showinfo('Error!',
                           'You must first create a directory to save data output.',
@@ -2326,6 +2457,8 @@ class MasterGUI(GUI):
             self.ard_toggle_button.config(state=Tk.DISABLED)
             self.lj_toggle_button.config(state=Tk.DISABLED)
             self.cmr_toggle_button.config(state=Tk.DISABLED)
+            self.preset_save_button.config(state=Tk.DISABLED)
+            self.preset_save_entry.config(state=Tk.DISABLED)
         if not running:
             self.master.protocol('WM_DELETE_WINDOW',
                                  self.hard_exit)
@@ -2350,6 +2483,8 @@ class MasterGUI(GUI):
             self.ard_toggle_button.config(state=Tk.NORMAL)
             self.lj_toggle_button.config(state=Tk.NORMAL)
             self.cmr_toggle_button.config(state=Tk.NORMAL)
+            self.preset_save_button.config(state=Tk.NORMAL)
+            self.preset_save_entry.config(state=Tk.NORMAL)
 
 
 #################################################################
@@ -2357,6 +2492,7 @@ class MasterGUI(GUI):
 class GUIThreadHandler(threading.Thread):
     """Handles all non-gui processing and communicates
     with GUI via queue polling"""
+
     def __init__(self, master_gui_queue, instructions_queue):
         threading.Thread.__init__(self)
         self.daemon = True
@@ -2607,6 +2743,7 @@ class GUIThreadHandler(threading.Thread):
 
 class LabJackU6(u6.U6):
     """LabJack control functions"""
+
     def __init__(self, ard_ready_lock, cmr_ready_lock, master_gui_queue,
                  lj_read_ready_lock, lj_exp_ready_lock):
         u6.U6.__init__(self)
@@ -2624,6 +2761,7 @@ class LabJackU6(u6.U6):
         self.lj_exp_ready_lock = lj_exp_ready_lock
         # Queues:
         self.data_queue = Queue.Queue()
+        self.missed_queue = Queue.Queue()
         self.status_queue = master_gui_queue
         ##########################################################
         # Hardware Parameters
@@ -2764,9 +2902,9 @@ class LabJackU6(u6.U6):
             self.packetsPerRequest = 1
         elif SamplesPerPacket == 25:  # For all ScanFreq > 25.
             self.packetsPerRequest = self.find_packets_per_req(ScanFrequency, NumChannels)
-        # Such that PacketsPerRequest*SamplesPerPacket % NumChannels == 0,
-        # where min P/R is 1 and max 48 for nCh 1-6,8
-        # and max 42 for nCh 7.
+            # Such that PacketsPerRequest*SamplesPerPacket % NumChannels == 0,
+            # where min P/R is 1 and max 48 for nCh 1-6,8
+            # and max 42 for nCh 7.
 
     def read_with_counter(self, num_requests, datacount_hold):
         """Given a number of requests, pulls data from labjack
@@ -2800,20 +2938,21 @@ class LabJackU6(u6.U6):
             (float(self.scan_freq * self.n_ch * 0.5) / float(
                 self.packetsPerRequest * self.streamSamplesPerPacket))))
         # We will read 3 segments: 0.5s before begin exp, during exp, and 0.5s after exp
-        # 1. we need to open the stream
+        # 1. wait until arduino and camera are ready
+        self.ard_ready_lock.wait()
+        self.cmr_ready_lock.wait()
+        # 2. notify master gui that we've begun
+        self.status_queue.put_nowait('<lj>Started Streaming.')
+        ####################################################################
+        # STARTED STREAMING
+        self.time_start_read = datetime.now()
+        # begin the stream; this should happen as close to actual streaming as possible
+        # to avoid dropping data
         try:
             self.streamStart()
         except LowlevelErrorException:
             self.streamStop()  # happens if a previous instance was not closed properly
             self.streamStart()
-        # 2. wait until arduino and camera are ready
-        self.ard_ready_lock.wait()
-        self.cmr_ready_lock.wait()
-        # 3. then we begin streaming and recording (0.5s before ard and cmr start)
-        self.status_queue.put_nowait('<lj>Started Streaming.')
-        ####################################################################
-        # STARTED STREAMING
-        self.time_start_read = datetime.now()
         self.lj_read_ready_lock.set()
         self.running = True
         while self.running:
@@ -2822,6 +2961,7 @@ class LabJackU6(u6.U6):
             self.read_with_counter(small_request, datacount_hold)
             # 2. read for duration of time specified in dirs.settings.ard_last_used['packet'][3]
             self.lj_exp_ready_lock.set()  # we also unblock arduino and camera threads
+            self.status_queue.put_nowait('<ljst>')
             time_start = datetime.now()
             self.read_with_counter(max_requests, datacount_hold)
             time_stop = datetime.now()
@@ -2829,8 +2969,8 @@ class LabJackU6(u6.U6):
             self.read_with_counter(small_request, datacount_hold)
             time_stop_read = datetime.now()
             self.running = False
-        self.running = False
         self.streamStop()
+        self.running = False  # redundant but just in case
         if not self.hard_stopped:
             self.status_queue.put_nowait('<lj>Finished Successfully.')
         elif self.hard_stopped:
@@ -2840,24 +2980,52 @@ class LabJackU6(u6.U6):
         self.lj_exp_ready_lock.clear()
         ####################################################################
         # now we do some reporting
-        if not self.hard_stopped:
-            # samples taken for each interval:
-            multiplier = self.packetsPerRequest * self.streamSamplesPerPacket
-            datacount_hold = (np.asarray(datacount_hold)) * multiplier
-            total_samples = sum(i for i in datacount_hold)
-            # total run times for each interval
-            before_run_time = time_diff(start_time=self.time_start_read, end_time=time_start, choice='micros')
-            run_time = time_diff(start_time=time_start, end_time=time_stop, choice='micros')
-            after_run_time = time_diff(start_time=time_stop, end_time=time_stop_read, choice='micros')
-            total_run_time = time_diff(start_time=self.time_start_read, end_time=time_stop_read, choice='micros')
-            # actual sampling frequencies
+        missed_list_msg = self.missed_queue.get()
+        # samples taken for each interval:
+        multiplier = self.packetsPerRequest * self.streamSamplesPerPacket
+        datacount_hold = (np.asarray(datacount_hold)) * multiplier
+        total_samples = sum(i for i in datacount_hold)
+        # total run times for each interval
+        before_run_time = time_diff(start_time=self.time_start_read, end_time=time_start, choice='micros')
+        run_time = time_diff(start_time=time_start, end_time=time_stop, choice='micros')
+        after_run_time = time_diff(start_time=time_stop, end_time=time_stop_read, choice='micros')
+        total_run_time = time_diff(start_time=self.time_start_read, end_time=time_stop_read, choice='micros')
+        # Reconstruct when and where missed values occured
+        missed_before, missed_during, missed_after = 0, 0, 0
+        if len(missed_list_msg) != 0:
+            for i in missed_list_msg:
+                if i[1] <= float(int(before_run_time)) / 1000:
+                    missed_before += i[0]
+                elif float(int(before_run_time)) / 1000 < i[1] <= (float(int(
+                        before_run_time)) + float(int(run_time))) / 1000:
+                    missed_during += i[0]
+                elif (float(int(before_run_time)) + float(int(run_time))) / 1000 < i[1] <= (float(int(
+                        before_run_time)) + float(int(run_time)) + float(int(after_run_time))) / 1000:
+                    missed_after += i[0]
+        missed_total = missed_before + missed_during + missed_after
+        # actual sampling frequencies
+        try:
             overall_smpl_freq = int(round(float(total_samples) * 1000) / total_run_time)
-            overall_scan_freq = overall_smpl_freq / self.n_ch
+        except ZeroDivisionError:
+            overall_smpl_freq = 0
+        overall_scan_freq = overall_smpl_freq / self.n_ch
+        try:
             exp_smpl_freq = int(round(float(datacount_hold[1]) * 1000) / run_time)
-            exp_scan_freq = exp_smpl_freq / self.n_ch
+        except ZeroDivisionError:
+            exp_smpl_freq = 0
+        exp_scan_freq = exp_smpl_freq / self.n_ch
+        self.status_queue.put_nowait('<ljr>{},{},{},{},{},{},{},{},{},{},{},{},n/a,{},n/a,{},n/a,{},n/a,{}'
+                                     ''.format(float(before_run_time) / 1000,
+                                               float(run_time) / 1000, float(after_run_time) / 1000,
+                                               float(total_run_time) / 1000,
+                                               datacount_hold[0], datacount_hold[1], datacount_hold[2],
+                                               total_samples, missed_before, missed_during, missed_after,
+                                               missed_total, exp_smpl_freq, overall_smpl_freq, exp_scan_freq,
+                                               overall_scan_freq))
 
     def data_write_plot(self):
         """Reads from data queue and writes to file/plots"""
+        self.missed_queue.queue.clear()
         missed_total, missed_list = 0, []
         save_file_name = '[name]--{}'.format(format_daytime(options='daytime'))
         with open(dirs.results_dir + save_file_name + '.csv', 'w') as save_file:
@@ -2865,7 +3033,6 @@ class LabJackU6(u6.U6):
                 save_file.write('AIN{},'.format(self.ch_num[i]))
             save_file.write('\n')
             self.lj_read_ready_lock.wait()  # wait for the go ahead from read_stream_data
-            self.status_queue.put_nowait('<ljst>')
             while self.running:
                 if not self.running:
                     self.data_queue.queue.clear()
@@ -2873,6 +3040,7 @@ class LabJackU6(u6.U6):
                 result = self.data_queue.get()
                 if result['errors'] != 0:
                     missed_total += result['missed']
+                    self.status_queue.put_nowait('<ljm>{}'.format(missed_total))
                     missed_time = datetime.now()
                     timediff = time_diff(start_time=self.time_start_read,
                                          end_time=missed_time)
@@ -2883,10 +3051,12 @@ class LabJackU6(u6.U6):
                     for i in range(self.n_ch):
                         save_file.write(str(r['AIN{}'.format(self.ch_num[i])][each]) + ',')
                     save_file.write('\n')
+            self.missed_queue.put_nowait(missed_list)
 
 
 class FireFly(object):
     """firefly camera"""
+
     def __init__(self, lj_exp_ready_lock, master_gui_queue, cmr_ready_lock, ard_ready_lock):
         # Hardware parameters
         self.context = None
@@ -2975,6 +3145,7 @@ class FireFly(object):
 
 class ArduinoUno(object):
     """Handles serial communication with arduino"""
+
     def __init__(self, lj_exp_ready_lock, master_gui_queue, ard_ready_lock, cmr_ready_lock):
         # Thread controls
         self.lj_exp_ready_lock = lj_exp_ready_lock
@@ -3188,6 +3359,7 @@ class Directories(object):
     """File Formats:
     .frcl: Main Settings Pickle
     .csv: Standard comma separated file for data output"""
+
     def __init__(self):
         self.lock = threading.Lock()
         self.user_home = os.path.expanduser('~')
@@ -3251,6 +3423,7 @@ class Directories(object):
 
 class MainSettings(object):
     """Object saves and holds all relevant parameters and presets"""
+
     def __init__(self):
         self.ser_port = ''
         self.save_dir = ''
@@ -3285,10 +3458,10 @@ class MainSettings(object):
         self.lj_presets = {'example': {'ch_num': [0, 1, 2, 10, 11],
                                        'scan_freq': 6250}}
         self.ard_presets = {'example':
-                            {'packet': ['<BBLHHH', 255, 255, 180000, 1, 2, 0],
-                             'tone_pack': [['<LLH', 120000, 150000, 2800]],
-                             'out_pack': [['<LB', 148000, 4], ['<LB', 150000, 4]],
-                             'pwm_pack': []}}
+                                {'packet': ['<BBLHHH', 255, 255, 180000, 1, 2, 0],
+                                 'tone_pack': [['<LLH', 120000, 150000, 2800]],
+                                 'out_pack': [['<LB', 148000, 4], ['<LB', 150000, 4]],
+                                 'pwm_pack': []}}
 
     def quick_ard(self):
         """
@@ -3323,6 +3496,7 @@ import random
 # noinspection PyMethodMayBeStatic
 class ServoDrive(object):
     """stim values"""
+
     def getVelocity(self):
         """d"""
         return random.randint(0, 50)
@@ -3335,11 +3509,12 @@ class ServoDrive(object):
 # noinspection PyClassicStyleClass
 class Example(Tk.Frame):
     """s"""
+
     def __init__(self, *args, **kwargs):
         # noinspection PyTypeChecker,PyCallByClass
         Tk.Frame.__init__(self, *args, **kwargs)
         self.servo = ServoDrive()
-        self.canvas = Tk.Canvas(self, background="#EFEFEF", height=216, width=288)
+        self.canvas = Tk.Canvas(self, background="#EFEFEF", height=216, width=600)
         self.canvas.pack(side="top", fill="both", expand=True)
 
         # create lines for velocity and torque
@@ -3364,7 +3539,7 @@ class Example(Tk.Frame):
         x = coords[-2] + 1
         coords.append(x)
         coords.append(y)
-        coords = coords[-200:]  # keep # of points to a manageable size
+        coords = coords[:]  # keep # of points to a manageable size
         self.canvas.coords(line, *coords)
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
