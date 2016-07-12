@@ -47,6 +47,7 @@ from LabJackPython import LowlevelErrorException, LabJackException
 #   pickling issues)
 # Queues:
 MASTER_DUMP_QUEUE = multiprocessing.Queue()
+MASTER_GRAPH_QUEUE = multiprocessing.Queue()
 THREAD_DUMP_QUEUE = multiprocessing.Queue()
 PROCESS_DUMP_QUEUE = multiprocessing.Queue()
 # Lock Controls
@@ -248,6 +249,50 @@ class ProgressBar(object):
     def stop(self):
         """Stops the progress bar"""
         self.running = False
+
+
+# noinspection PyClassicStyleClass
+class LiveGraph(Tk.Frame):
+    """Live Graph Plotting"""
+
+    def __init__(self, *args, **kwargs):
+        # noinspection PyTypeChecker,PyCallByClass
+        Tk.Frame.__init__(self, *args, **kwargs)
+        self.canvas = Tk.Canvas(self, background="#EFEFEF", height=216, width=600)
+        self.canvas.pack(side="top", fill="both", expand=True)
+        # color scheme
+        self.color_scheme = ['red', 'blue', '#206760', '#8a6fa8',
+                             '#d09163', '#d0c963', '#3e817a', '#8a6fa8']
+        self.lines = None
+        self.create_new_lines()
+
+    def create_new_lines(self):
+        """creates 8 lines, corresponding to the 8 max channels on
+        labjack"""
+        self.lines = []
+        for i in range(8):
+            self.lines.append(self.canvas.create_line(0, 0, 0, 0, fill=self.color_scheme[i]))
+
+    def clear_plot(self):
+        """clears existing lines on the graph"""
+        for i in range(8):
+            self.canvas.delete(self.lines[i])
+
+    def update_plot(self, *args):
+        """Updates data on the plot"""
+        for i in range(len(args[0])):
+            self.add_point(self.lines[i], args[0][i])
+        self.canvas.xview_moveto(1.0)
+
+    def add_point(self, line, y):
+        """adds new data to existing plot"""
+        coords = self.canvas.coords(line)
+        x = coords[-2] + 1
+        coords.append(x)
+        coords.append(y)
+        coords = coords[:]  # keep # of points to a manageable size
+        self.canvas.coords(line, *coords)
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
 
 # noinspection PyClassicStyleClass,PyTypeChecker
@@ -1390,6 +1435,7 @@ class MasterGUI(GUI):
         ###################################################################
         # Concurrency Controls
         self.master_dump_queue = MASTER_DUMP_QUEUE
+        self.master_graph_queue = MASTER_GRAPH_QUEUE
         self.thread_dump_queue = THREAD_DUMP_QUEUE
         self.process_dump_queue = PROCESS_DUMP_QUEUE
         ###########################
@@ -1415,6 +1461,8 @@ class MasterGUI(GUI):
         self.thread_handler.start()
         self.master.after(10, self.gui_event_loop)
         self.master.after(10, self.video_stream)
+        self.master.after(10, self.lj_graph_stream)
+        self.clear_lj_plot = False
         self.center()
 
     #####################################################################
@@ -1518,7 +1566,8 @@ class MasterGUI(GUI):
         self.lj_table = SimpleTable(report_frame, 6, 5, highlight_column=2, highlight_color='#72ab97')
         self.lj_table.grid(row=1, column=2, sticky=self.ALL)
         self.lj_report_table_config()
-        Example(report_frame).grid(row=0, column=0, columnspan=2, rowspan=1000, sticky=self.ALL)
+        self.lj_graph = LiveGraph(report_frame)
+        self.lj_graph.grid(row=0, column=0, columnspan=2, rowspan=1000, sticky=self.ALL)
 
     # noinspection PyAttributeOutsideInit
     def render_arduino(self):
@@ -2040,6 +2089,20 @@ class MasterGUI(GUI):
         self.lj_status_var.set('Channels:\n{}\n'
                                '\nScan Freq: [{}Hz]'.format(channels, freq))
 
+    def lj_graph_stream(self):
+        """streams data from labjack"""
+        try:
+            data = self.master_graph_queue.get_nowait()
+        except Queue.Empty:
+            pass
+        else:
+            self.lj_graph.update_plot(data)
+        if self.master_graph_queue.qsize() == 0 and self.clear_lj_plot:
+            self.lj_graph.clear_plot()
+            self.lj_graph.create_new_lines()
+            self.clear_lj_plot = False
+        self.master.after(30, self.lj_graph_stream)
+
     # Photometry GUI Functions
     #####################################################################
     def fp_toggle(self):
@@ -2467,6 +2530,7 @@ class MasterGUI(GUI):
     def progbar_run(self):
         """Check if valid settings, make directories, and start progress bar"""
         # Check folders are available
+        self.clear_lj_plot = True
         self.lj_table.clear()
         if len(self.save_dir_list) == 0 and len(self.results_dir_used) == 0 and dirs.settings.save_dir == '':
             tkMb.showinfo('Error!',
@@ -2799,6 +2863,7 @@ class LJProcessHandler(multiprocessing.Process):
         self.name = 'LabJack Process Handler'
         # Concurrency Controls
         self.master_dump_queue = MASTER_DUMP_QUEUE
+        self.master_graph_queue = MASTER_GRAPH_QUEUE
         self.thread_dump_queue = THREAD_DUMP_QUEUE
         self.process_dump_queue = PROCESS_DUMP_QUEUE
         #####
@@ -2878,10 +2943,10 @@ class LJProcessHandler(multiprocessing.Process):
                     self.master_dump_queue.put_nowait('<threads>{}'.format(thread_list))
                 if self.settings.debug_console:
                     print 'CP -- ', msg
-                if self.lj_created and not self.lj_device.running and self.exp_is_running:
-                    self.thread_dump_queue.put_nowait('<lj_run_false>')
-                    self.exp_is_running = False
-                    self.hard_stop_experiment = False
+            if self.lj_created and not self.lj_device.running and self.exp_is_running:
+                self.thread_dump_queue.put_nowait('<lj_run_false>')
+                self.exp_is_running = False
+                self.hard_stop_experiment = False
 
     def create_lj(self):
         """creates new LJ object"""
@@ -2891,7 +2956,9 @@ class LJProcessHandler(multiprocessing.Process):
                 self.lj_device = LabJackU6(ard_ready_lock=self.ard_ready_lock,
                                            cmr_ready_lock=self.cmr_ready_lock,
                                            lj_read_ready_lock=self.lj_read_ready_lock,
-                                           lj_exp_ready_lock=self.lj_exp_ready_lock)
+                                           lj_exp_ready_lock=self.lj_exp_ready_lock,
+                                           master_dump_queue=self.master_dump_queue,
+                                           master_graph_queue=self.master_graph_queue)
                 self.lj_created = True
                 self.thread_dump_queue.put_nowait('<lj_created>')
             except (LabJackException, LowlevelErrorException):
@@ -2949,25 +3016,33 @@ class LabJackU6(u6.U6):
     """LabJack control functions"""
 
     def __init__(self, ard_ready_lock, cmr_ready_lock,
-                 lj_read_ready_lock, lj_exp_ready_lock):
+                 lj_read_ready_lock, lj_exp_ready_lock,
+                 master_dump_queue, master_graph_queue):
         u6.U6.__init__(self)
         self.running = False
         self.hard_stopped = False
         self.connected = False
         self.time_start_read = datetime.now()
         ##########################################################
-        # Threading Controls
+        # note on concurrency controls:
+        # since the LJ is created AFTER creating the separate process,
+        # it won't have access to main process globals;
+        # the locks and queues must be passed from the process handler,
+        # which would have had access at time of process creation
+        ##########################################################
+        # Concurrency Controls
         # Locks to wait on:
         self.ard_ready_lock = ard_ready_lock
         self.cmr_ready_lock = cmr_ready_lock
         # Locks to control:
         self.lj_read_ready_lock = lj_read_ready_lock
         self.lj_exp_ready_lock = lj_exp_ready_lock
-        # Queues:
+        # Queues for own use
         self.data_queue = Queue.Queue()  # data from stream to write
         self.missed_queue = Queue.Queue()
         # dumps small reports (post-exp and missed values) to master gui
-        self.master_gui_dump_queue = MASTER_DUMP_QUEUE
+        self.master_gui_dump_queue = master_dump_queue
+        self.master_gui_graph_queue = master_graph_queue
         ##########################################################
         # Hardware Parameters
         self.settings = None
@@ -3166,8 +3241,8 @@ class LabJackU6(u6.U6):
             # 1. 0.5s before exp start; extra collected to avoid missing anything
             self.read_with_counter(small_request, datacount_hold)
             # 2. read for duration of time specified in dirs.settings.ard_last_used['packet'][3]
-            self.lj_exp_ready_lock.set()  # we also unblock arduino and camera threads
             self.master_gui_dump_queue.put_nowait('<ljst>')
+            self.lj_exp_ready_lock.set()  # we also unblock arduino and camera threads
             time_start = datetime.now()
             self.read_with_counter(max_requests, datacount_hold)
             time_stop = datetime.now()
@@ -3239,6 +3314,7 @@ class LabJackU6(u6.U6):
                 save_file.write('AIN{},'.format(self.ch_num[i]))
             save_file.write('\n')
             self.lj_read_ready_lock.wait()  # wait for the go ahead from read_stream_data
+            data_to_master_counter = 1
             while self.running:
                 if not self.running:
                     self.data_queue.queue.clear()
@@ -3257,6 +3333,14 @@ class LabJackU6(u6.U6):
                     for i in range(self.n_ch):
                         save_file.write(str(r['AIN{}'.format(self.ch_num[i])][each]) + ',')
                     save_file.write('\n')
+                if time_diff(self.time_start_read) / data_to_master_counter >= 50:
+                    to_send = []
+                    for i in range(self.n_ch):
+                        to_send.append((r['AIN{}'.format(self.ch_num[i])][0]) * (-27) / 5 + (-27) * (i - 1))
+                    self.master_gui_graph_queue.put_nowait(to_send)
+                    data_to_master_counter += 1
+                    if not self.running:
+                        break
             self.missed_queue.put_nowait(missed_list)
 
 
@@ -3695,62 +3779,6 @@ class MainSettings(object):
         return [self.fp_last_used['ch_num'],
                 self.fp_last_used['main_freq'],
                 self.fp_last_used['isos_freq']]
-
-
-#################
-# Experimental stuff here
-import random
-
-
-# noinspection PyMethodMayBeStatic
-class ServoDrive(object):
-    """stim values"""
-
-    def getVelocity(self):
-        """d"""
-        return random.randint(0, 50)
-
-    def getTorque(self):
-        """d"""
-        return random.randint(50, 100)
-
-
-# noinspection PyClassicStyleClass
-class Example(Tk.Frame):
-    """s"""
-
-    def __init__(self, *args, **kwargs):
-        # noinspection PyTypeChecker,PyCallByClass
-        Tk.Frame.__init__(self, *args, **kwargs)
-        self.servo = ServoDrive()
-        self.canvas = Tk.Canvas(self, background="#EFEFEF", height=216, width=600)
-        self.canvas.pack(side="top", fill="both", expand=True)
-
-        # create lines for velocity and torque
-        self.velocity_line = self.canvas.create_line(0, 0, 0, 0, fill="red")
-        self.torque_line = self.canvas.create_line(0, 0, 0, 0, fill="blue")
-
-        # start the update process
-        self.update_plot()
-
-    def update_plot(self):
-        """S"""
-        v = self.servo.getVelocity()
-        t = self.servo.getTorque()
-        self.add_point(self.velocity_line, v)
-        self.add_point(self.torque_line, t)
-        self.canvas.xview_moveto(1.0)
-        self.after(100, self.update_plot)
-
-    def add_point(self, line, y):
-        """s"""
-        coords = self.canvas.coords(line)
-        x = coords[-2] + 1
-        coords.append(x)
-        coords.append(y)
-        coords = coords[:]  # keep # of points to a manageable size
-        self.canvas.coords(line, *coords)
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
 
 #################################################################
