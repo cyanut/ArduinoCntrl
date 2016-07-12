@@ -1881,7 +1881,7 @@ class MasterGUI(GUI):
                 main_threads_qfts += 1
         print ' - Main Process Threads ({}):'.format(threading.active_count())
         for i in range(len(main_threads_list)):
-            print '   {} - {}'.format(i, main_threads_list[i])
+            print '   {} - {}'.format(i + 1, main_threads_list[i])
         print '     + [{}x] QueueFeederThreads'.format(main_threads_qfts)
         print ' - {} Threads ({}):'.format(multiprocessing.active_children()[0].name, len(msg))
         proc_threads_list = []
@@ -1892,7 +1892,7 @@ class MasterGUI(GUI):
             else:
                 proc_threads_qfts += 1
         for i in range(len(proc_threads_list)):
-            print '   {} - {}'.format(i, proc_threads_list[i])
+            print '   {} - {}'.format(i + 1, proc_threads_list[i])
         print '     + [{}x] QueueFeederThreads'.format(proc_threads_qfts)
 
     def debug_printing(self):
