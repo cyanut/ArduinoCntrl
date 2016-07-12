@@ -14,6 +14,8 @@
       <w>coords</w>
       <w>datacount</w>
       <w>dayformat</w>
+      <w>dboff</w>
+      <w>dbon</w>
       <w>ggplot</w>
       <w>hardstop</w>
       <w>imgs</w>
@@ -24,6 +26,7 @@
       <w>ljst</w>
       <w>lllllbl</w>
       <w>matplot</w>
+      <w>qfts</w>
       <w>smpl</w>
       <w>smpls</w>
       <w>statustext</w>

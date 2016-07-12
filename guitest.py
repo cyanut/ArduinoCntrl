@@ -32,6 +32,7 @@ import tkMessageBox as tkMb
 from PIL.ImageTk import Image, PhotoImage
 from LabJackPython import LowlevelErrorException, LabJackException
 
+
 ################################################################
 # To do list:
 # - Arduino GUI Geometry fine tuning
@@ -40,9 +41,20 @@ from LabJackPython import LowlevelErrorException, LabJackException
 # - adding start/stop conditionals for camera
 # - correct status messages for every device for every stage
 #################################################################
-# Global Variables
-TIME_OFFSET = 3600 * 4
-DEBUG = False
+# Concurrency Controls:
+#   (global variables because otherwise we need to create these
+#   under the child process and extract as attributes to avoid
+#   pickling issues)
+# Queues:
+MASTER_DUMP_QUEUE = multiprocessing.Queue()
+THREAD_DUMP_QUEUE = multiprocessing.Queue()
+PROCESS_DUMP_QUEUE = multiprocessing.Queue()
+# Lock Controls
+LJ_READ_READY_LOCK = multiprocessing.Event()
+LJ_EXP_READY_LOCK = multiprocessing.Event()
+ARD_READY_LOCK = multiprocessing.Event()
+CMR_READY_LOCK = multiprocessing.Event()
+###################################################################
 
 
 # Misc. Functions
@@ -214,24 +226,23 @@ class ProgressBar(object):
 
     def advance(self):
         """Moves the progressbar one increment when necessary"""
-        now = datetime.now()
-        self.time_diff = (now - self.start_prog).seconds + float(
-            (now - self.start_prog).microseconds) / 1000000
-        if self.time_diff / self.num_time >= 0.005:
-            self.canvas.itemconfig(self.time_gfx,
-                                   text='{}'.format(format_secs(self.time_diff, True)))
-            self.num_time += 1
-        if self.time_diff / self.num_prog >= self.segment_size:
-            self.canvas.move(self.bar, 1, 0)
-            if (self.num_prog > 35) and (self.num_prog < 965):
-                self.canvas.move(self.time_gfx, 1, 0)
-            self.num_prog += 1
-        self.canvas.update()
-        time.sleep(0.010)
-        if self.num_prog > 1000 or self.time_diff > float(self.ms_total_time / 1000):
-            self.running = False
-            return self.running
         if self.running:
+            now = datetime.now()
+            self.time_diff = (now - self.start_prog).seconds + float(
+                (now - self.start_prog).microseconds) / 1000000
+            if self.time_diff / self.num_time >= 0.005:
+                self.canvas.itemconfig(self.time_gfx,
+                                       text='{}'.format(format_secs(self.time_diff, True)))
+                self.num_time += 1
+            if self.time_diff / self.num_prog >= self.segment_size:
+                self.canvas.move(self.bar, 1, 0)
+                if (self.num_prog > 35) and (self.num_prog < 965):
+                    self.canvas.move(self.time_gfx, 1, 0)
+                self.num_prog += 1
+            self.canvas.update()
+            if self.num_prog > 1000 or self.time_diff > float(self.ms_total_time / 1000):
+                self.running = False
+                return self.running
             self.master.after(10, self.advance)
 
     def stop(self):
@@ -376,8 +387,9 @@ class PhotometryGUI(GUI):
                 buttons[frame][i] = Tk.Radiobutton(frames[frame],
                                                    text=str(i), value=i,
                                                    variable=self.radio_button_vars[frame],
-                                                   command=lambda (button_var, index)
-                                                          =(self.radio_button_vars[frame], frame):
+                                                   command=lambda (button_var,
+                                                                   index)=(self.radio_button_vars[frame],
+                                                                           frame):
                                                    self.select_button(button_var, index))
                 buttons[frame][i].pack(side=Tk.LEFT)
 
@@ -1371,6 +1383,16 @@ class MasterGUI(GUI):
         self.single_widget_dim = 100
         # noinspection PyUnresolvedReferences
         self.balloon = Pmw.Balloon(master)
+        ###################################################################
+        # Note on Threading Control:
+        # All queues initiated by child thread that puts data IN
+        # All locks initiated by child thread that CONTROLS its set and clear
+        ###################################################################
+        # Concurrency Controls
+        self.master_dump_queue = MASTER_DUMP_QUEUE
+        self.thread_dump_queue = THREAD_DUMP_QUEUE
+        self.process_dump_queue = PROCESS_DUMP_QUEUE
+        ###########################
         # Save variables
         self.save_dir_name_used = []
         self.results_dir_used = {}
@@ -1386,35 +1408,19 @@ class MasterGUI(GUI):
         self.progbar_started = False
         ###########################
         # Finalize GUI window and launch
-        self.process_handler = LJProcessHandler()
-        self.lj_read_ready_lock = self.process_handler.lj_read_ready_lock
-        self.lj_exp_ready_lock = self.process_handler.lj_exp_ready_lock
-        self.ard_ready_lock = self.process_handler.ard_ready_lock
-        self.cmr_ready_lock = self.process_handler.cmr_ready_lock
-        self.report_queue = self.process_handler.master_gui_report_queue
-        self.thread_instructions_queue = self.process_handler.thread_instruct_queue
-        self.process_instructions_queue = self.process_handler.instruct_queue
-        self.proc_to_thrd_report_queue = self.process_handler.report_queue
-        self.settings_pipe = self.process_handler.settings_pipe
-        self.thread_handler = GUIThreadHandler(report_queue=self.report_queue,
-                                               thread_instructions_queue=self.thread_instructions_queue,
-                                               process_instructions_queue=self.process_instructions_queue,
-                                               proc_to_thrd_report_queue=self.proc_to_thrd_report_queue,
-                                               lj_read_ready_lock=self.lj_read_ready_lock,
-                                               lj_exp_ready_lock=self.lj_exp_ready_lock,
-                                               ard_ready_lock=self.ard_ready_lock,
-                                               cmr_ready_lock=self.cmr_ready_lock,
-                                               settings_pipe=self.settings_pipe)
+        self.process_dump_queue.put_nowait(dirs.settings)
+        self.lj_proc_handler = LJProcessHandler()
+        self.thread_handler = GUIThreadHandler()
+        self.lj_proc_handler.start()
         self.thread_handler.start()
-        self.process_handler.start()
         self.master.after(10, self.gui_event_loop)
         self.master.after(10, self.video_stream)
         self.center()
 
-    # THESE FUNCTIONS DO NOT INTERACT WITH DEVICES
     #####################################################################
     # GUI Setup
     #####################################################################
+    # noinspection PyAttributeOutsideInit
     def render_photometry(self):
         """sets up photometry component"""
         frame = Tk.LabelFrame(self.master, text='Optional Photometry Config.',
@@ -1439,6 +1445,7 @@ class MasterGUI(GUI):
         self.fp_config_button.config(state='disabled')
         Tk.Label(frame, textvariable=self.fp_statustext_var).pack()
 
+    # noinspection PyAttributeOutsideInit
     def render_saves(self):
         """save gui setup"""
         self.save_grab_list()
@@ -1482,6 +1489,7 @@ class MasterGUI(GUI):
                                          self.save_button_options(new=True))
         self.new_save_button.pack(side=Tk.TOP)
 
+    # noinspection PyAttributeOutsideInit
     def render_lj(self):
         """lj config gui"""
         # Frame
@@ -1512,6 +1520,7 @@ class MasterGUI(GUI):
         self.lj_report_table_config()
         Example(report_frame).grid(row=0, column=0, columnspan=2, rowspan=1000, sticky=self.ALL)
 
+    # noinspection PyAttributeOutsideInit
     def render_arduino(self):
         """Sets up the main progress bar, arduino config buttons,
         and various status message bars"""
@@ -1535,7 +1544,10 @@ class MasterGUI(GUI):
                                         command=self.clear_saves)
         self.clr_svs_button.grid(row=0, column=90, columnspan=10, sticky=self.ALL)
         self.debug_chk_var = Tk.IntVar()
-        self.debug_chk_var.set(0)
+        if dirs.settings.debug_console:
+            self.debug_chk_var.set(1)
+        elif not dirs.settings.debug_console:
+            self.debug_chk_var.set(0)
         Tk.Checkbutton(ard_frame, text='', variable=self.debug_chk_var,
                        command=self.debug_printing, onvalue=1,
                        offvalue=0).grid(row=0, column=79, sticky=Tk.E)
@@ -1621,10 +1633,10 @@ class MasterGUI(GUI):
         self.ard_toggle_var.set(1)
         self.ard_toggle_button = Tk.Checkbutton(ard_frame, variable=self.ard_toggle_var, text='Arduino',
                                                 onvalue=1, offvalue=0, command=lambda:
-            self.device_status_msg_toggle(self.ard_toggle_var,
-                                          self.ard_status_bar,
-                                          ard_status_display,
-                                          name='ard'))
+                                                self.device_status_msg_toggle(self.ard_toggle_var,
+                                                                              self.ard_status_bar,
+                                                                              ard_status_display,
+                                                                              name='ard'))
         self.ard_toggle_button.grid(row=0, column=70, sticky=Tk.E)
         # LabJack
         self.lj_status_bar = Tk.StringVar()
@@ -1640,10 +1652,10 @@ class MasterGUI(GUI):
         self.lj_toggle_var.set(1)
         self.lj_toggle_button = Tk.Checkbutton(ard_frame, variable=self.lj_toggle_var, text='LabJack',
                                                onvalue=1, offvalue=0, command=lambda:
-            self.device_status_msg_toggle(self.lj_toggle_var,
-                                          self.lj_status_bar,
-                                          lj_status_display,
-                                          name='lj'))
+                                               self.device_status_msg_toggle(self.lj_toggle_var,
+                                                                             self.lj_status_bar,
+                                                                             lj_status_display,
+                                                                             name='lj'))
         self.lj_toggle_button.grid(row=0, column=72, sticky=Tk.E)
         # Camera
         self.cmr_status_bar = Tk.StringVar()
@@ -1657,10 +1669,10 @@ class MasterGUI(GUI):
         self.cmr_toggle_var.set(1)
         self.cmr_toggle_button = Tk.Checkbutton(ard_frame, variable=self.cmr_toggle_var, text='Camera',
                                                 onvalue=1, offvalue=0, command=lambda:
-            self.device_status_msg_toggle(self.cmr_toggle_var,
-                                          self.cmr_status_bar,
-                                          cmr_status_display,
-                                          name='cmr'))
+                                                self.device_status_msg_toggle(self.cmr_toggle_var,
+                                                                              self.cmr_status_bar,
+                                                                              cmr_status_display,
+                                                                              name='cmr'))
         self.cmr_toggle_button.grid(row=0, column=74, sticky=Tk.E)
         # Save Status
         self.save_status_bar = Tk.StringVar()
@@ -1768,6 +1780,7 @@ class MasterGUI(GUI):
         self.lj_table.set_var(4, 0, 'Smpl Freq (Hz)')
         self.lj_table.set_var(5, 0, 'Scan Freq (Hz)')
 
+    # noinspection PyAttributeOutsideInit
     def render_camera(self):
         """sets up camera feed"""
         frame = Tk.LabelFrame(self.master, text='Camera Feed')
@@ -1776,21 +1789,19 @@ class MasterGUI(GUI):
         self.camera_panel.grid(row=0, column=0, sticky=self.ALL)
         self.video_stream()
 
-    # Genera GUI Functions
+    # Genera GUI Functions (INTERACTIONS WITH THREADHANDLER AND
+    # PROCESS HANDLER ARE IN THIS BLOCK)
     #####################################################################
     def gui_event_loop(self):
         """Master GUI will call this periodically to check for
         thread queue items"""
         try:
-            msg = self.report_queue.get_nowait()
-            if DEBUG:
+            msg = self.master_dump_queue.get_nowait()
+            if dirs.settings.debug_console:
                 print msg
             if msg == '<ex_succ>':
                 self.master.destroy()
                 self.master.quit()
-            elif msg.startswith('<threads>'):
-                msg = ast.literal_eval(msg[9:])
-                self.gui_debug(request_threads=False, msg=msg)
             elif msg.startswith('<ex_err>'):
                 msg = msg[8:].split(',')
                 devices = ''
@@ -1823,6 +1834,9 @@ class MasterGUI(GUI):
                 self.progbar_started = False
                 msg = msg[9:]
                 self.save_status_bar.set(msg)
+            elif msg.startswith('<threads>'):
+                msg = ast.literal_eval(msg[9:])
+                self.gui_debug(request_threads=False, msg=msg)
             elif msg in ['<ljst>', '<ardst>', '<cmrst>']:
                 if not self.progbar_started:
                     self.progbar.start()
@@ -1843,11 +1857,11 @@ class MasterGUI(GUI):
             pass
         self.master.after(50, self.gui_event_loop)
 
-    def gui_debug(self, request_threads=True, msg=None):
+    # noinspection PyDefaultArgument
+    def gui_debug(self, request_threads=True, msg=[]):
         """Under the hood stuff printed when press debug button"""
         if request_threads:
-            self.process_instructions_queue.put_nowait('<threads>')
-            self.gui_event_loop()
+            self.process_dump_queue.put_nowait('<thr>')
             return
         print '#' * 40 + '\nDEBUG\n' + '#' * 40
         print '\nSETTINGS'
@@ -1855,42 +1869,46 @@ class MasterGUI(GUI):
         print '#' * 15
         print 'CAMERA QUEUE COUNT: {}'.format(self.thread_handler.cmr_device.data_queue.qsize())
         print '#' * 15
-        ##################################################################
-        processes = multiprocessing.active_children()
-        print 'ACTIVE PROCESSES: {}'.format(len(processes) + 1)
-        ##################################################################
+        print 'ACTIVE PROCESSES: {}'.format(len(multiprocessing.active_children()) + 1)
+        #########################################################
+        main_threads = threading.enumerate()
+        main_threads_list = []
+        main_threads_qfts = 0
+        for i in main_threads:
+            if i.name != 'QueueFeederThread':
+                main_threads_list.append(i.name)
+            else:
+                main_threads_qfts += 1
         print ' - Main Process Threads ({}):'.format(threading.active_count())
-        threads = [i.name for i in threading.enumerate()]
-        queue_feeder_count = 0
-        for i in threads:
-            if i == 'QueueFeederThread':
-                queue_feeder_count += 1
-                threads.remove(i)
+        for i in range(len(main_threads_list)):
+            print '   {} - {}'.format(i, main_threads_list[i])
+        print '     + [{}x] QueueFeederThreads'.format(main_threads_qfts)
+        print ' - {} Threads ({}):'.format(multiprocessing.active_children()[0].name, len(msg))
+        proc_threads_list = []
+        proc_threads_qfts = 0
+        for i in msg:
+            if i[1] != 'QueueFeederThread':
+                proc_threads_list.append(i[1])
             else:
-                print '      {} - {}'.format(threads.index(i), i)
-        print '      (+ {}x Queue Feeder Threads'.format(queue_feeder_count)
-        queue_feeder_count = 0
-        print ' - {} threads ({}):'.format(processes[0].name, len(msg))
-        for thread in msg:
-            if thread == 'QueueFeederThread':
-                queue_feeder_count += 1
-                msg.remove(thread)
-            else:
-                print '      {} - {}'.format(thread[0], thread[1])
-        print '      (+ {}x Queue Feeder Threads'.format(queue_feeder_count)
+                proc_threads_qfts += 1
+        for i in range(len(proc_threads_list)):
+            print '   {} - {}'.format(i, proc_threads_list[i])
+        print '     + [{}x] QueueFeederThreads'.format(proc_threads_qfts)
 
     def debug_printing(self):
         """more debug messages"""
-        global DEBUG
         if self.debug_chk_var.get() == 1:
-            DEBUG = True
+            dirs.settings.debug_console = True
+            self.process_dump_queue.put_nowait('<dbon>')
         else:
-            DEBUG = False
+            dirs.settings.debug_console = False
+            self.process_dump_queue.put_nowait('<dboff>')
 
     def hard_exit(self, allow=True):
         """Handles devices before exiting for a clean close"""
         if allow:
-            self.thread_instructions_queue.put_nowait('<exit>')
+            self.thread_dump_queue.put_nowait('<exit>')
+            self.process_dump_queue.put_nowait('<exit>')
         else:
             tkMb.showwarning('Error!', 'Please STOP the experiment first.',
                              parent=self.master)
@@ -1905,11 +1923,15 @@ class MasterGUI(GUI):
         if var.get() == 0:
             status.set('disabled')
             display.config(state=Tk.DISABLED)
-            self.thread_instructions_queue.put_nowait('<{}off>'.format(name))
+            self.thread_dump_queue.put_nowait('<{}off>'.format(name))
+            if name == 'lj':
+                self.process_dump_queue.put_nowait('<ljoff>')
         elif var.get() == 1:
             status.set('enabled')
             display.config(state=Tk.NORMAL)
-            self.thread_instructions_queue.put_nowait('<{}on>'.format(name))
+            self.thread_dump_queue.put_nowait('<{}on>'.format(name))
+            if name == 'lj':
+                self.process_dump_queue.put_nowait('<ljon>')
         # experiment start button is only available if at least one device is enabled
         if self.ard_toggle_var.get() == 0 and self.lj_toggle_var.get() == 0 and self.cmr_toggle_var.get() == 0:
             self.prog_on.config(state=Tk.DISABLED)
@@ -1933,12 +1955,14 @@ class MasterGUI(GUI):
 
     # Save GUI Methods
     #####################################################################
+    # noinspection PyAttributeOutsideInit
     def save_grab_list(self):
         """Updates output save directories list"""
         self.save_dir_list = [d for d
                               in os.listdir(dirs.main_save_dir)
                               if os.path.isdir(dirs.main_save_dir + d)]
 
+    # noinspection PyAttributeOutsideInit
     def save_button_options(self, inputs=None, new=False):
         """Determines whether to make a new save folder or not:"""
         self.save_grab_list()
@@ -1987,7 +2011,7 @@ class MasterGUI(GUI):
             )
             dirs.settings.save_dir = self.save_dir_to_use
 
-    # Camera GUI Methods (exception: pulls image data from camera queue)
+    # Camera GUI Methods
     #####################################################################
     def video_stream(self):
         """live streams video feed from camera"""
@@ -2098,7 +2122,7 @@ class MasterGUI(GUI):
                                      name=preset_name)
                 menu = self.ard_preset_menu.children['menu']
                 menu.add_command(label=preset_name, command=lambda name=preset_name:
-                self.ard_grab_data(True, name))
+                                 self.ard_grab_data(True, name))
                 self.ard_preset_chosen_var.set(preset_name)
                 tkMb.showinfo('Saved!', 'Preset saved as '
                                         '[{}]'.format(preset_name),
@@ -2202,10 +2226,12 @@ class MasterGUI(GUI):
                           'Time must be entered as integers',
                           parent=self.master)
 
+    # noinspection PyAttributeOutsideInit
     def ard_update_preset_list(self):
         """List of all Arduino Presets"""
         self.ard_preset_list = [i for i in dirs.settings.ard_presets]
 
+    # noinspection PyAttributeOutsideInit
     def ard_grab_data(self, destroy=False, load=False):
         """Obtain arduino data from saves"""
         # If load is false, then we load from settings.frcl
@@ -2437,6 +2463,7 @@ class MasterGUI(GUI):
     #####################################################################
     # Running the Experiment
     #####################################################################
+    # noinspection PyAttributeOutsideInit
     def progbar_run(self):
         """Check if valid settings, make directories, and start progress bar"""
         # Check folders are available
@@ -2459,13 +2486,18 @@ class MasterGUI(GUI):
             self.make_save_dir = 0
             self.save_grab_list()
         # Run
+        run_msg = '<run>'
+        self.thread_dump_queue.put_nowait(run_msg)
+        self.process_dump_queue.put_nowait(run_msg)
+        self.process_dump_queue.put_nowait(dirs.settings)
+        self.process_dump_queue.put_nowait(dirs.results_dir)
         self.save_status_bar.set('Started.')
-        self.thread_instructions_queue.put_nowait('<run>')
         self.run_bulk_toggle(running=True)
 
     def progbar_stop(self):
         """performs a hard stop on the experiment"""
-        self.thread_instructions_queue.put_nowait('<hardstop>')
+        self.thread_dump_queue.put_nowait('<hardstop>')
+        self.process_dump_queue.put_nowait('<hardstop>')
         self.progbar.stop()
 
     def run_bulk_toggle(self, running):
@@ -2497,8 +2529,7 @@ class MasterGUI(GUI):
             self.preset_save_button.config(state=Tk.DISABLED)
             self.preset_save_entry.config(state=Tk.DISABLED)
         if not running:
-            self.master.protocol('WM_DELETE_WINDOW',
-                                 self.hard_exit)
+            self.master.protocol('WM_DELETE_WINDOW', self.hard_exit)
             self.prog_off.config(state=Tk.DISABLED)
             self.prog_on.config(state=Tk.NORMAL)
             self.fp_toggle_button.config(state=Tk.NORMAL)
@@ -2525,31 +2556,28 @@ class MasterGUI(GUI):
 
 
 #################################################################
-# Non-GUI Threads
+# Concurrency Processors
 class GUIThreadHandler(threading.Thread):
     """Handles all non-gui processing and communicates
     with GUI via queue polling"""
 
-    def __init__(self, report_queue, thread_instructions_queue,
-                 process_instructions_queue,
-                 proc_to_thrd_report_queue, lj_read_ready_lock,
-                 lj_exp_ready_lock, ard_ready_lock, cmr_ready_lock,
-                 settings_pipe):
+    def __init__(self):
         threading.Thread.__init__(self)
         self.daemon = True
         self.name = 'Subthread Handler'
         # Thread handling
-        self.report_queue = report_queue
-        self.instruct_queue = thread_instructions_queue
-        self.proc_instruct_queue = process_instructions_queue
-        self.proc_to_thrd_report_queue = proc_to_thrd_report_queue
-        self.lj_read_ready_lock = lj_read_ready_lock
-        self.lj_exp_ready_lock = lj_exp_ready_lock
-        self.ard_ready_lock = ard_ready_lock
-        self.cmr_ready_lock = cmr_ready_lock
-        self.settings_pipe = settings_pipe
+        # Queues
+        self.master_dump_queue = MASTER_DUMP_QUEUE
+        self.thread_dump_queue = THREAD_DUMP_QUEUE
+        self.process_dump_queue = PROCESS_DUMP_QUEUE
+        #####
+        self.lj_read_ready_lock = LJ_READ_READY_LOCK
+        self.lj_exp_ready_lock = LJ_EXP_READY_LOCK
+        self.ard_ready_lock = ARD_READY_LOCK
+        self.cmr_ready_lock = CMR_READY_LOCK
         # Devices
-        self.lj_device = LabJackU6Dummy()
+        self.lj_connected = False
+        self.lj_running = False
         self.cmr_device = None
         self.ard_device = None
         # Use this device?
@@ -2571,9 +2599,9 @@ class GUIThreadHandler(threading.Thread):
         # because the camera needs to immediately start streaming,
         # we set it up now if possible
         self.cmr_device = FireFly(lj_exp_ready_lock=self.lj_exp_ready_lock,
-                                  master_gui_queue=self.report_queue,
                                   cmr_ready_lock=self.cmr_ready_lock,
-                                  ard_ready_lock=self.ard_ready_lock)
+                                  ard_ready_lock=self.ard_ready_lock,
+                                  master_gui_queue=self.master_dump_queue)
         if self.cmr_device.initialize():
             camera_thread = threading.Thread(target=self.cmr_device.camera_run,
                                              name='Camera Stream')
@@ -2582,28 +2610,25 @@ class GUIThreadHandler(threading.Thread):
             self.cmr_created = True
         # loops until we exit the program
         while self.running:
+            time.sleep(0.01)
             try:
-                msg = self.instruct_queue.get_nowait()
+                msg = self.thread_dump_queue.get_nowait()
             except Queue.Empty:
                 pass
             else:
                 if msg == '<run>':
-                    self.proc_instruct_queue.put_nowait('<run>')
                     if not self.devices_created:
                         if all(self.create_devices()):
                             self.devices_created = True
                         else:
-                            self.report_queue.put_nowait('<exp_end>Failed to Setup one '
-                                                         'of the selected devices.')
-                            self.cmr_device.recording = False
-                            self.ard_device.running = False
-                            self.lj_device.running = False
-                    if all(self.check_connections()):
+                            self.master_dump_queue.put_nowait('<exp_end>*** Failed to Initiate '
+                                                              'one of the selected devices.')
+                    if self.devices_created and all(self.check_connections()):
                         # devices needed are connected. start exp
                         if self.cmr_use:
                             self.cmr_device.recording = True
                         if self.lj_use:
-                            self.lj_device.running = self.proc_to_thrd_report_queue.get()
+                            self.lj_running = True
                         if self.ard_use:
                             ard_thread = threading.Thread(target=self.ard_device.run_experiment,
                                                           name='Arduino Control')
@@ -2612,19 +2637,10 @@ class GUIThreadHandler(threading.Thread):
                             self.ard_device.running = True
                         self.exp_is_running = True
                     else:
-                        self.report_queue.put_nowait('<exp_end>Failed to Initiate '
-                                                     'one of the selected devices.')
-                        self.cmr_device.recording = False
-                        self.ard_device.running = False
-                        self.lj_device.running = False
+                        self.master_dump_queue.put_nowait('<exp_end>*** Failed to Initiate '
+                                                          'one of the selected devices.')
                 elif msg == '<hardstop>':
                     self.hard_stop_experiment = True
-                    try:
-                        self.proc_instruct_queue.put_nowait('<hardstop>')
-                        (self.lj_device.hard_stopped,
-                         self.lj_device.running) = self.proc_to_thrd_report_queue.get()
-                    except (AttributeError, ValueError):
-                        pass
                     try:
                         self.ard_device.hard_stopped = True
                         self.ard_device.running = False
@@ -2636,8 +2652,7 @@ class GUIThreadHandler(threading.Thread):
                     except AttributeError:
                         pass
                 elif msg == '<ljoff>':
-                    self.proc_instruct_queue.put_nowait('<ljoff>')
-                    self.lj_use = self.proc_to_thrd_report_queue.get()
+                    self.lj_use = False
                 elif msg == '<ardoff>':
                     self.ard_use = False
                     self.ard_ready_lock.set()
@@ -2645,8 +2660,7 @@ class GUIThreadHandler(threading.Thread):
                     self.cmr_use = False
                     self.cmr_ready_lock.set()
                 elif msg == '<ljon>':
-                    self.proc_instruct_queue.put_nowait('<ljon>')
-                    self.lj_use = self.proc_to_thrd_report_queue.get()
+                    self.lj_use = True
                     self.devices_created = False
                 elif msg == '<ardon>':
                     self.ard_use = True
@@ -2656,18 +2670,18 @@ class GUIThreadHandler(threading.Thread):
                     self.cmr_use = True
                     self.cmr_ready_lock.clear()
                     self.devices_created = False
+                elif msg == '<lj_run_false>':
+                    self.lj_running = False
                 elif msg == '<exit>':
-                    self.proc_instruct_queue.put_nowait('<exit>')
                     self.close_devices()
-                if DEBUG:
+                if dirs.settings.debug_console:
                     print msg
-            if self.exp_is_running:
+            if self.devices_created and self.exp_is_running:
                 devices_to_check = []
                 if self.cmr_use:
                     devices_to_check.append(self.cmr_device.recording)
                 if self.lj_use:
-                    self.proc_instruct_queue.put_nowait('<r?>')
-                    devices_to_check.append(self.proc_to_thrd_report_queue.get())
+                    devices_to_check.append(self.lj_running)
                 if self.ard_use:
                     devices_to_check.append(self.ard_device.running)
                 if not any(devices_to_check):
@@ -2675,21 +2689,21 @@ class GUIThreadHandler(threading.Thread):
                     if self.hard_stop_experiment:
                         msg_with_save_status += 'Terminated.'
                         self.hard_stop_experiment = False
-                        self.proc_instruct_queue.put_nowait('<no_hardstop>')
                     elif not self.hard_stop_experiment:
                         msg_with_save_status += "Data saved in '{}'".format(dirs.results_dir)
-                    self.report_queue.put_nowait(msg_with_save_status)
+                    self.master_dump_queue.put_nowait(msg_with_save_status)
                     self.exp_is_running = False
-            time.sleep(0.01)
 
     def check_connections(self):
         """Checks that user enabled devices are ready to go"""
         devices_ready = []
         if self.lj_use:
-            devices_ready.append(self.proc_to_thrd_report_queue.get())
-            self.settings_pipe.send(dirs.settings.lj_last_used)
-            self.settings_pipe.send(dirs.settings.ard_last_used['packet'][3])
-            self.settings_pipe.send(dirs.results_dir)
+            lj_conn_status = self.thread_dump_queue.get()
+            if lj_conn_status == '<lj_connected>':
+                self.lj_connected = True
+            elif lj_conn_status == '<lj_conn_failed>':
+                self.lj_connected = False
+            devices_ready.append(self.lj_connected)
         if self.ard_use:
             self.ard_device.check_connection()
             devices_ready.append(self.ard_device.connected)
@@ -2702,17 +2716,17 @@ class GUIThreadHandler(threading.Thread):
     def create_devices(self):
         """Creates device instances"""
         devices_ready = []
+        # Labjack
         if self.lj_use and not self.lj_created:
-            self.report_queue.put_nowait('<lj>Creating LabJack Instance...')
-            if self.proc_to_thrd_report_queue.get():
+            lj_status = self.thread_dump_queue.get()
+            if dirs.settings.debug_console:
+                print lj_status
+            if lj_status == '<lj_created>':
                 self.lj_created = True
-                devices_ready.append(self.lj_created)
-            else:
-                self.report_queue.put_nowait('<lj>** LabJack could not be initialized! '
-                                             'Please perform a manual hard reset (disconnect'
-                                             ' then reconnect)')
+            elif lj_status == '<lj_create_failed>':
                 self.lj_created = False
-                devices_ready.append(self.lj_created)
+            devices_ready.append(self.lj_created)
+        # camera
         if self.cmr_use and not self.cmr_created:
             if self.cmr_device.initialize():
                 camera_thread = threading.Thread(target=self.cmr_device.camera_run,
@@ -2721,11 +2735,14 @@ class GUIThreadHandler(threading.Thread):
                 camera_thread.start()
                 self.cmr_created = True
                 devices_ready.append(self.cmr_created)
+        # arduino
         if self.ard_use and not self.ard_created:
             self.ard_device = ArduinoUno(lj_exp_ready_lock=self.lj_exp_ready_lock,
-                                         master_gui_queue=self.report_queue,
                                          ard_ready_lock=self.ard_ready_lock,
-                                         cmr_ready_lock=self.cmr_ready_lock)
+                                         cmr_ready_lock=self.cmr_ready_lock,
+                                         master_gui_queue=self.master_dump_queue)
+            self.master_dump_queue.put_nowait('<ard>Arduino initialized! Waiting for'
+                                              ' other selected devices to begin...')
             self.ard_created = True
             devices_ready.append(self.ard_created)
         return devices_ready
@@ -2733,14 +2750,16 @@ class GUIThreadHandler(threading.Thread):
     def close_devices(self):
         """attempts to close hardware properly, and reports
         close status to GUI"""
-        # labjack first
-        lj_error = self.proc_to_thrd_report_queue.get()
-        # others next
         cmr_error, ard_error = False, False
+        lj_error = self.thread_dump_queue.get()
+        if lj_error == '<lj_ex_err>':
+            lj_error = True
+        elif lj_error == '<lj_ex_succ>':
+            lj_error = False
         # camera
         try:
             self.cmr_device.close()
-            if DEBUG:
+            if dirs.settings.debug_console:
                 print 'Camera Closed Successfully.'
         except fc2.ApiError:
             cmr_error = True
@@ -2749,7 +2768,7 @@ class GUIThreadHandler(threading.Thread):
         # ... and arduino
         try:
             self.ard_device.serial.close()
-            if DEBUG:
+            if dirs.settings.debug_console:
                 print 'Arduino Closed Successfully.'
         except serial.SerialException:
             ard_error = True
@@ -2764,10 +2783,481 @@ class GUIThreadHandler(threading.Thread):
             if ard_error:
                 error_msg += 'ard,'
             error_msg = error_msg[:-1]
-            self.report_queue.put_nowait(error_msg)
+            self.master_dump_queue.put_nowait(error_msg)
         else:
-            self.report_queue.put_nowait('<ex_succ>')
+            self.master_dump_queue.put_nowait('<ex_succ>')
         self.running = False
+
+
+class LJProcessHandler(multiprocessing.Process):
+    """Handles all labjack instructions on a separate process
+    for maximum labjack stream rates"""
+
+    def __init__(self):
+        multiprocessing.Process.__init__(self)
+        self.daemon = True
+        self.name = 'LabJack Process Handler'
+        # Concurrency Controls
+        self.master_dump_queue = MASTER_DUMP_QUEUE
+        self.thread_dump_queue = THREAD_DUMP_QUEUE
+        self.process_dump_queue = PROCESS_DUMP_QUEUE
+        #####
+        self.lj_read_ready_lock = LJ_READ_READY_LOCK
+        self.lj_exp_ready_lock = LJ_EXP_READY_LOCK
+        self.ard_ready_lock = ARD_READY_LOCK
+        self.cmr_ready_lock = CMR_READY_LOCK
+        # LJ parameters
+        self.lj_device = None
+        # Use this device?
+        self.lj_use = True
+        self.lj_created = False
+        # main handler loop
+        self.hard_stop_experiment = False
+        self.exp_is_running = False
+        self.running = True
+        # Grab settings from main process
+        self.settings = None
+        self.results_dir = None
+
+    def run(self):
+        """periodically checks for instructions from
+        self.process_dump_queue and performs them"""
+        self.settings = self.process_dump_queue.get()
+        while self.running:
+            time.sleep(0.01)
+            try:
+                msg = self.process_dump_queue.get_nowait()
+                if self.settings.debug_console:
+                    print msg
+            except Queue.Empty:
+                pass
+            else:
+                if msg == '<run>':
+                    # grab dirs.settings from main process
+                    self.settings = self.process_dump_queue.get()
+                    self.results_dir = self.process_dump_queue.get()
+                    self.create_lj()
+                    if self.lj_created and self.check_lj_connected():
+                        if self.lj_use:
+                            lj_stream_thread = threading.Thread(target=self.lj_device.read_stream_data,
+                                                                args=(self.settings,),
+                                                                name='LabJack Stream')
+                            lj_stream_thread.daemon = True
+                            lj_write_thread = threading.Thread(target=self.lj_device.data_write_plot,
+                                                               args=(self.results_dir,),
+                                                               name='LabJack Data Write')
+                            lj_write_thread.daemon = True
+                            lj_write_thread.start()
+                            lj_stream_thread.start()
+                            self.lj_device.running = True
+                            self.exp_is_running = True
+                elif msg == '<hardstop>':
+                    self.hard_stop_experiment = True
+                    try:
+                        self.lj_device.hard_stopped = True
+                        self.lj_device.running = False
+                    except AttributeError:
+                        pass
+                elif msg == '<ljoff>':
+                    self.lj_use = False
+                    self.lj_read_ready_lock.set()
+                    self.lj_exp_ready_lock.set()
+                elif msg == '<ljon>':
+                    self.lj_use = True
+                    self.lj_read_ready_lock.clear()
+                    self.lj_exp_ready_lock.clear()
+                elif msg == '<dbon>':
+                    self.settings.debug_console = True
+                elif msg == '<dboff>':
+                    self.settings.debug_console = False
+                elif msg == '<exit>':
+                    self.close_lj()
+                elif msg == '<thr>':
+                    threads = threading.enumerate()
+                    thread_list = []
+                    for i in range(len(threads)):
+                        thread_list.append([i, threads[i].name])
+                    self.master_dump_queue.put_nowait('<threads>{}'.format(thread_list))
+                if self.lj_created and not self.lj_device.running and self.exp_is_running:
+                    self.thread_dump_queue.put_nowait('<lj_run_false>')
+                    self.exp_is_running = False
+                    self.hard_stop_experiment = False
+
+    def create_lj(self):
+        """creates new LJ object"""
+        if self.lj_use and not self.lj_created:
+            try:
+                self.master_dump_queue.put_nowait('<lj>Creating LabJack Instance...')
+                self.lj_device = LabJackU6(ard_ready_lock=self.ard_ready_lock,
+                                           cmr_ready_lock=self.cmr_ready_lock,
+                                           lj_read_ready_lock=self.lj_read_ready_lock,
+                                           lj_exp_ready_lock=self.lj_exp_ready_lock)
+                self.lj_created = True
+                self.thread_dump_queue.put_nowait('<lj_created>')
+            except (LabJackException, LowlevelErrorException):
+                self.master_dump_queue.put_nowait('<lj>** LabJack could not be initialized! '
+                                                  'Please perform a manual hard reset (disconnect'
+                                                  ' then reconnect)')
+                self.lj_created = False
+                self.thread_dump_queue.put_nowait('<lj_create_failed>')
+
+    def check_lj_connected(self):
+        """checks that the labjack is connected if requested"""
+        if self.lj_use:
+            self.lj_device.check_connection()
+            if self.lj_device.connected:
+                self.thread_dump_queue.put_nowait('<lj_connected>')
+            elif not self.lj_device.connected:
+                self.thread_dump_queue.put_nowait('<lj_conn_failed>')
+            return self.lj_device.connected
+
+    def close_lj(self):
+        """closes the labjack"""
+        lj_error = False
+        try:
+            self.lj_device.streamStop()
+            self.lj_device.close()
+            if self.settings.debug_console:
+                print 'LabJack Closed Successfully [SC]'
+        except (LabJackException, LowlevelErrorException):
+            try:
+                self.lj_device.close()
+                self.lj_device.streamStop()
+                if self.settings.debug_console:
+                    print 'LabJack Closed Successfully [CS]'
+            except (LabJackException, LowlevelErrorException):
+                try:
+                    self.lj_device.close()
+                    if self.settings.debug_console:
+                        print 'LabJack Closed Successfully [N]'
+                except LabJackException:
+                    if self.settings.debug_console:
+                        print 'Bad LabJack Close.'
+                    lj_error = True
+        except AttributeError:
+            pass
+        if lj_error:
+            self.thread_dump_queue.put_nowait('<lj_ex_err>')
+        elif not lj_error:
+            self.thread_dump_queue.put_nowait('<lj_ex_succ>')
+        self.running = False
+
+
+####################################################################
+# Device Hardware Control and Reporting
+class LabJackU6(u6.U6):
+    """LabJack control functions"""
+
+    def __init__(self, ard_ready_lock, cmr_ready_lock,
+                 lj_read_ready_lock, lj_exp_ready_lock):
+        u6.U6.__init__(self)
+        self.running = False
+        self.hard_stopped = False
+        self.connected = False
+        self.time_start_read = datetime.now()
+        ##########################################################
+        # Threading Controls
+        # Locks to wait on:
+        self.ard_ready_lock = ard_ready_lock
+        self.cmr_ready_lock = cmr_ready_lock
+        # Locks to control:
+        self.lj_read_ready_lock = lj_read_ready_lock
+        self.lj_exp_ready_lock = lj_exp_ready_lock
+        # Queues:
+        self.data_queue = Queue.Queue()  # data from stream to write
+        self.missed_queue = Queue.Queue()
+        # dumps small reports (post-exp and missed values) to master gui
+        self.master_gui_dump_queue = MASTER_DUMP_QUEUE
+        ##########################################################
+        # Hardware Parameters
+        self.settings = None
+        self.ch_num = [0]
+        self.scan_freq = 1
+        self.n_ch = 1
+        self.streamSamplesPerPacket = 25
+        self.packetsPerRequest = 48
+        self.streamChannelNumbers = self.ch_num
+        self.streamChannelOptions = [0] * self.n_ch
+
+    def check_connection(self):
+        """Checks if LabJack is ready to be connected to"""
+        self.master_gui_dump_queue.put_nowait('<lj>Connecting to LabJack...')
+        try:
+            self.close()
+            self.open()
+            self.master_gui_dump_queue.put('<lj>Connected to LabJack!')
+            self.connected = True
+            return
+        except LabJackException:
+            try:
+                self.streamStop()
+                self.close()
+                self.open()
+                self.master_gui_dump_queue.put('<lj>Connected to LabJack!')
+                self.connected = True
+                return
+            except (LabJackException, LowlevelErrorException):
+                try:
+                    self.master_gui_dump_queue.put('<lj>Failed. Attempting a Hard Reset...')
+                    self.hardReset()
+                    time.sleep(2.5)
+                    self.open()
+                    self.master_gui_dump_queue.put('<lj>Connected to LabJack!')
+                    self.connected = True
+                    return
+                except LabJackException:
+                    self.master_gui_dump_queue.put('<lj>** LabJack cannot be reached! '
+                                                   'Please reconnect the device.')
+                    self.connected = False
+                    return
+
+    def reinitialize_vars(self):
+        """Reloads channel and freq information from settings
+        in case they were changed. call this before any lj streaming"""
+        self.ch_num = self.settings.lj_last_used['ch_num']
+        self.scan_freq = self.settings.lj_last_used['scan_freq']
+        self.n_ch = len(self.ch_num)
+
+    @staticmethod
+    def find_packets_per_req(scanFreq, nCh):
+        """Returns optimal packets per request to use"""
+        if nCh == 7:
+            high = 42
+        else:
+            high = 48
+        hold = []
+        for i in range(scanFreq + 1):
+            if i % 25 == 0 and i % nCh == 0:
+                hold.append(i)
+        hold = np.asarray(hold)
+        hold = min(high, max(hold / 25))
+        hold = max(1, hold)
+        return hold
+
+    @staticmethod
+    def find_samples_per_pack(scanFreq, nCh):
+        """Returns optimal samples per packet to use"""
+        hold = []
+        for i in range(scanFreq + 1):
+            if i % nCh == 0:
+                hold.append(i)
+        return max(hold)
+
+    # noinspection PyDefaultArgument
+    def streamConfig(self, NumChannels=1, ResolutionIndex=0,
+                     SamplesPerPacket=25, SettlingFactor=0,
+                     InternalStreamClockFrequency=0, DivideClockBy256=False,
+                     ScanInterval=1, ChannelNumbers=[0],
+                     ChannelOptions=[0], ScanFrequency=None,
+                     SampleFrequency=None):
+        """Sets up Streaming settings"""
+        if NumChannels != len(ChannelNumbers) or NumChannels != len(ChannelOptions):
+            raise LabJackException("NumChannels must match length "
+                                   "of ChannelNumbers and ChannelOptions")
+        if len(ChannelNumbers) != len(ChannelOptions):
+            raise LabJackException("len(ChannelNumbers) doesn't "
+                                   "match len(ChannelOptions)")
+        if (ScanFrequency is not None) or (SampleFrequency is not None):
+            if ScanFrequency is None:
+                ScanFrequency = SampleFrequency
+            if ScanFrequency < 1000:
+                if ScanFrequency < 25:
+                    # below 25 ScanFreq, S/P is some multiple of nCh less than SF.
+                    SamplesPerPacket = self.find_samples_per_pack(ScanFrequency, NumChannels)
+                DivideClockBy256 = True
+                ScanInterval = 15625 / ScanFrequency
+            else:
+                DivideClockBy256 = False
+                ScanInterval = 4000000 / ScanFrequency
+        ScanInterval = min(ScanInterval, 65535)
+        ScanInterval = int(ScanInterval)
+        ScanInterval = max(ScanInterval, 1)
+        SamplesPerPacket = max(SamplesPerPacket, 1)
+        SamplesPerPacket = int(SamplesPerPacket)
+        SamplesPerPacket = min(SamplesPerPacket, 25)
+        command = [0] * (14 + NumChannels * 2)
+        # command[0] = Checksum8
+        command[1] = 0xF8
+        command[2] = NumChannels + 4
+        command[3] = 0x11
+        # command[4] = Checksum16 (LSB)
+        # command[5] = Checksum16 (MSB)
+        command[6] = NumChannels
+        command[7] = ResolutionIndex
+        command[8] = SamplesPerPacket
+        # command[9] = Reserved
+        command[10] = SettlingFactor
+        command[11] = (InternalStreamClockFrequency & 1) << 3
+        if DivideClockBy256:
+            command[11] |= 1 << 1
+        t = pack("<H", ScanInterval)
+        command[12] = ord(t[0])
+        command[13] = ord(t[1])
+        for i in range(NumChannels):
+            command[14 + (i * 2)] = ChannelNumbers[i]
+            command[15 + (i * 2)] = ChannelOptions[i]
+        self._writeRead(command, 8, [0xF8, 0x01, 0x11])
+        self.streamSamplesPerPacket = SamplesPerPacket
+        self.streamChannelNumbers = ChannelNumbers
+        self.streamChannelOptions = ChannelOptions
+        self.streamConfiged = True
+        # Only happens for ScanFreq < 25, in which case
+        # this number is generated as described above
+        if SamplesPerPacket < 25:
+            self.packetsPerRequest = 1
+        elif SamplesPerPacket == 25:  # For all ScanFreq > 25.
+            self.packetsPerRequest = self.find_packets_per_req(ScanFrequency, NumChannels)
+            # Such that PacketsPerRequest*SamplesPerPacket % NumChannels == 0,
+            # where min P/R is 1 and max 48 for nCh 1-6,8
+            # and max 42 for nCh 7.
+
+    def read_with_counter(self, num_requests, datacount_hold):
+        """Given a number of requests, pulls data from labjack
+         and returns number of data points pulled"""
+        reading = True
+        datacount = 0
+        while reading:
+            if not self.running:
+                break
+            return_dict = self.streamData(convert=False).next()
+            self.data_queue.put_nowait(deepcopy(return_dict))
+            datacount += 1
+            if datacount >= num_requests:
+                reading = False
+        datacount_hold.append(datacount)
+
+    # noinspection PyUnboundLocalVariable
+    def read_stream_data(self, settings):
+        """Reads from stream and puts in queue"""
+        # pulls lj config and sets up the stream
+        self.settings = settings
+        self.reinitialize_vars()
+        self.getCalibrationData()
+        self.streamConfig(NumChannels=self.n_ch, ChannelNumbers=self.ch_num,
+                          ChannelOptions=[0] * self.n_ch, ScanFrequency=self.scan_freq)
+        datacount_hold = []
+        ttl_time = self.settings.ard_last_used['packet'][3]
+        max_requests = int(math.ceil(
+            (float(self.scan_freq * self.n_ch * ttl_time / 1000) / float(
+                self.packetsPerRequest * self.streamSamplesPerPacket))))
+        small_request = int(round(
+            (float(self.scan_freq * self.n_ch * 0.5) / float(
+                self.packetsPerRequest * self.streamSamplesPerPacket))))
+        # We will read 3 segments: 0.5s before begin exp, during exp, and 0.5s after exp
+        # 1. wait until arduino and camera are ready
+        self.ard_ready_lock.wait()
+        self.cmr_ready_lock.wait()
+        # 2. notify master gui that we've begun
+        self.master_gui_dump_queue.put_nowait('<lj>Started Streaming.')
+        ####################################################################
+        # STARTED STREAMING
+        self.time_start_read = datetime.now()
+        # begin the stream; this should happen as close to actual streaming as possible
+        # to avoid dropping data
+        try:
+            self.streamStart()
+        except LowlevelErrorException:
+            self.streamStop()  # happens if a previous instance was not closed properly
+            self.streamStart()
+        self.lj_read_ready_lock.set()
+        self.running = True
+        while self.running:
+            # at anytime, this can be disrupted by a hardstop from the main thread
+            # 1. 0.5s before exp start; extra collected to avoid missing anything
+            self.read_with_counter(small_request, datacount_hold)
+            # 2. read for duration of time specified in dirs.settings.ard_last_used['packet'][3]
+            self.lj_exp_ready_lock.set()  # we also unblock arduino and camera threads
+            self.master_gui_dump_queue.put_nowait('<ljst>')
+            time_start = datetime.now()
+            self.read_with_counter(max_requests, datacount_hold)
+            time_stop = datetime.now()
+            # 3. read for another 0.5s after
+            self.read_with_counter(small_request, datacount_hold)
+            time_stop_read = datetime.now()
+            self.running = False
+        self.streamStop()
+        self.running = False  # redundant but just in case
+        if not self.hard_stopped:
+            self.master_gui_dump_queue.put_nowait('<lj>Finished Successfully.')
+        elif self.hard_stopped:
+            self.master_gui_dump_queue.put_nowait('<lj>Terminated Stream.')
+            self.hard_stopped = False
+        self.lj_read_ready_lock.clear()
+        self.lj_exp_ready_lock.clear()
+        ####################################################################
+        # now we do some reporting
+        missed_list_msg = self.missed_queue.get()
+        # samples taken for each interval:
+        multiplier = self.packetsPerRequest * self.streamSamplesPerPacket
+        datacount_hold = (np.asarray(datacount_hold)) * multiplier
+        total_samples = sum(i for i in datacount_hold)
+        # total run times for each interval
+        before_run_time = time_diff(start_time=self.time_start_read, end_time=time_start, choice='micros')
+        run_time = time_diff(start_time=time_start, end_time=time_stop, choice='micros')
+        after_run_time = time_diff(start_time=time_stop, end_time=time_stop_read, choice='micros')
+        total_run_time = time_diff(start_time=self.time_start_read, end_time=time_stop_read, choice='micros')
+        # Reconstruct when and where missed values occured
+        missed_before, missed_during, missed_after = 0, 0, 0
+        if len(missed_list_msg) != 0:
+            for i in missed_list_msg:
+                if i[1] <= float(int(before_run_time)) / 1000:
+                    missed_before += i[0]
+                elif float(int(before_run_time)) / 1000 < i[1] <= (float(int(
+                        before_run_time)) + float(int(run_time))) / 1000:
+                    missed_during += i[0]
+                elif (float(int(before_run_time)) + float(int(run_time))) / 1000 < i[1] <= (float(int(
+                        before_run_time)) + float(int(run_time)) + float(int(after_run_time))) / 1000:
+                    missed_after += i[0]
+        missed_total = missed_before + missed_during + missed_after
+        # actual sampling frequencies
+        try:
+            overall_smpl_freq = int(round(float(total_samples) * 1000) / total_run_time)
+        except ZeroDivisionError:
+            overall_smpl_freq = 0
+        overall_scan_freq = overall_smpl_freq / self.n_ch
+        try:
+            exp_smpl_freq = int(round(float(datacount_hold[1]) * 1000) / run_time)
+        except ZeroDivisionError:
+            exp_smpl_freq = 0
+        exp_scan_freq = exp_smpl_freq / self.n_ch
+        self.master_gui_dump_queue.put_nowait('<ljr>{},{},{},{},{},{},{},{},{},{},{},{},n/a,{},n/a,{},n/a,{},n/a,{}'
+                                              ''.format(float(before_run_time) / 1000,
+                                                        float(run_time) / 1000, float(after_run_time) / 1000,
+                                                        float(total_run_time) / 1000,
+                                                        datacount_hold[0], datacount_hold[1], datacount_hold[2],
+                                                        total_samples, missed_before, missed_during, missed_after,
+                                                        missed_total, exp_smpl_freq, overall_smpl_freq, exp_scan_freq,
+                                                        overall_scan_freq))
+
+    def data_write_plot(self, results_dir):
+        """Reads from data queue and writes to file/plots"""
+        self.missed_queue.queue.clear()
+        missed_total, missed_list = 0, []
+        save_file_name = '[name]--{}'.format(format_daytime(options='daytime'))
+        with open(results_dir + save_file_name + '.csv', 'w') as save_file:
+            for i in range(self.n_ch):
+                save_file.write('AIN{},'.format(self.ch_num[i]))
+            save_file.write('\n')
+            self.lj_read_ready_lock.wait()  # wait for the go ahead from read_stream_data
+            while self.running:
+                if not self.running:
+                    self.data_queue.queue.clear()
+                    break
+                result = self.data_queue.get()
+                if result['errors'] != 0:
+                    missed_total += result['missed']
+                    self.master_gui_dump_queue.put_nowait('<ljm>{}'.format(missed_total))
+                    missed_time = datetime.now()
+                    timediff = time_diff(start_time=self.time_start_read,
+                                         end_time=missed_time)
+                    missed_list.append([deepcopy(result['missed']),
+                                        deepcopy(float(timediff) / 1000)])
+                r = self.processStreamData(result['result'])
+                for each in range(len(r['AIN{}'.format(self.ch_num[0])])):
+                    for i in range(self.n_ch):
+                        save_file.write(str(r['AIN{}'.format(self.ch_num[i])][each]) + ',')
+                    save_file.write('\n')
+            self.missed_queue.put_nowait(missed_list)
 
 
 class FireFly(object):
@@ -2815,7 +3305,7 @@ class FireFly(object):
                 try:
                     self.data_queue.put_nowait(self.context.tempImgGet())
                 except fc2.ApiError:
-                    if DEBUG:
+                    if dirs.settings.debug_console:
                         print 'Camera Closed. Code = IsoT'
                         return
             if self.recording:
@@ -3018,7 +3508,8 @@ class ArduinoUno(object):
                                      'Port [{}]. '
                                      'Sending data '
                                      'packets...'.format(self.ser_port))
-        system_time = ["<L", calendar.timegm(time.gmtime()) - TIME_OFFSET]
+        time_offset = 3600 * 4  # EST = -4 hours
+        system_time = ["<L", calendar.timegm(time.gmtime()) - time_offset]
         pwm_pack_send = []
         for i in dirs.settings.ard_last_used['pwm_pack']:
             period = (float(1000000) / float(i[4]))
@@ -3067,477 +3558,6 @@ class ArduinoUno(object):
         self.serial.open()
         self.serial.close()
         self.ard_ready_lock.clear()
-
-
-class LabJackU6Dummy(object):
-    """Dummy class for thread handler to work with"""
-    def __init__(self):
-        self.running = False
-        self.hard_stopped = False
-        self.connected = False
-
-
-#################################################################
-# Separate process for max LJ stream rate
-class LJProcessHandler(multiprocessing.Process):
-    """handles a separate process and the LabJack thread"""
-
-    def __init__(self):
-        multiprocessing.Process.__init__(self)
-        self.name = 'LabJack Process Handler'
-        self.daemon = True
-        # Process Handling
-        self.report_queue = multiprocessing.Queue()
-        self.instruct_queue = multiprocessing.Queue()
-        self.thread_instruct_queue = multiprocessing.Queue()
-        self.master_gui_report_queue = multiprocessing.Queue()
-        self.lj_read_ready_lock = multiprocessing.Event()
-        self.lj_exp_ready_lock = multiprocessing.Event()
-        self.ard_ready_lock = multiprocessing.Event()
-        self.cmr_ready_lock = multiprocessing.Event()
-        self.pipe_recv, self.settings_pipe = multiprocessing.Pipe(False)
-        # LJ Handling
-        self.lj_device = None
-        self.lj_use = True
-        self.lj_created = False
-        # Main loop handler
-        self.hard_stop_experiment = False
-        self.exp_is_running = False
-        self.running = True
-        # initialize dirs.settings
-        self.lj_last_used = {}
-        self.total_time = 0
-
-    def run(self):
-        """runs for as long as program is running. periodically checks for
-        master gui instructions"""
-        while self.running:
-            try:
-                msg = self.instruct_queue.get_nowait()
-            except Queue.Empty:
-                pass
-            else:
-                if msg == '<run>':
-                    if self.lj_use and not self.lj_created:
-                        self.create_lj()
-                    if self.lj_created and self.check_lj_connected():
-                        if self.lj_use:
-                            lj_stream_thread = threading.Thread(target=self.lj_device.read_stream_data,
-                                                                name='LabJack Stream')
-                            lj_stream_thread.daemon = True
-                            lj_write_thread = threading.Thread(target=self.lj_device.data_write_plot,
-                                                               name='LabJack Data Write')
-                            lj_write_thread.daemon = True
-                            lj_write_thread.start()
-                            lj_stream_thread.start()
-                            self.lj_device.running = True
-                            self.report_queue.put_nowait(self.lj_device.running)
-                    else:
-                        self.report_queue.put_nowait('<lj>** LabJack could not be initialized! '
-                                                     'Please check that it is connected and '
-                                                     'try again.')
-                elif msg == '<hardstop>':
-                    self.hard_stop_experiment = True
-                    try:
-                        self.lj_device.hard_stopped = True
-                        self.lj_device.running = False
-                        self.report_queue.put_nowait((self.lj_device.hard_stopped,
-                                                     self.lj_device.running))
-                    except AttributeError:
-                        pass
-                elif msg == '<ljoff>':
-                    self.lj_use = False
-                    self.lj_read_ready_lock.set()
-                    self.lj_exp_ready_lock.set()
-                    self.report_queue.put_nowait(self.lj_use)
-                elif msg == '<ljon>':
-                    self.lj_use = True
-                    self.lj_read_ready_lock.clear()
-                    self.lj_exp_ready_lock.clear()
-                    self.report_queue.put_nowait(self.lj_use)
-                elif msg == '<exit>':
-                    self.close_lj()
-                elif msg == '<r?>':
-                    self.report_queue.put_nowait(self.lj_device.running)
-                elif msg == '<no_hardstop>':
-                    self.hard_stop_experiment = False
-                elif msg == '<threads>':
-                    threads = threading.enumerate()
-                    threads_list = []
-                    for thread_index in range(len(threads)):
-                        threads_list.append([thread_index, threads[thread_index].name])
-                    self.master_gui_report_queue.put_nowait('<threads>{}'.format(threads_list))
-                if DEBUG:
-                    print msg
-            time.sleep(0.05)
-
-    def close_lj(self):
-        """closes labjack instance"""
-        lj_error = False
-        try:
-            self.lj_device.streamStop()
-            self.lj_device.close()
-            if DEBUG:
-                print 'LabJack Closed Successfully. Exit Code: [SSb]'
-        except (LabJackException, LowlevelErrorException):
-            try:
-                self.lj_device.close()
-                self.lj_device.streamStop()
-                if DEBUG:
-                    print 'LabJack Closed Successfully. Exit Code: [SSa]'
-            except (LabJackException, LowlevelErrorException):
-                try:
-                    self.lj_device.close()
-                    if DEBUG:
-                        print 'LabJack Closed Successfully. Exit Code: [NC]'
-                except LabJackException:
-                    lj_error = True
-        except AttributeError:
-            pass
-        self.report_queue.put_nowait(lj_error)
-        self.running = False
-
-    def check_lj_connected(self):
-        """checks labjack connection status"""
-        if self.lj_use:
-            self.lj_device.check_connection()
-            self.report_queue.put_nowait(self.lj_device.connected)
-            self.lj_device.lj_last_used = self.pipe_recv.recv()
-            self.lj_device.total_time = self.pipe_recv.recv()
-            self.lj_device.results_dir = self.pipe_recv.recv()
-            return self.lj_device.connected
-
-    def create_lj(self):
-        """creates labjack instance"""
-        try:
-            self.lj_device = LabJackU6(ard_ready_lock=self.ard_ready_lock,
-                                       cmr_ready_lock=self.cmr_ready_lock,
-                                       master_gui_queue=self.master_gui_report_queue,
-                                       lj_read_ready_lock=self.lj_read_ready_lock,
-                                       lj_exp_ready_lock=self.lj_exp_ready_lock,
-                                       pipe_recv=self.pipe_recv)
-            self.lj_created = True
-        except (LabJackException, LowlevelErrorException):
-            self.lj_created = False
-        self.report_queue.put_nowait(self.lj_created)
-
-
-class LabJackU6(u6.U6):
-    """LabJack control functions"""
-
-    def __init__(self, ard_ready_lock, cmr_ready_lock, master_gui_queue,
-                 lj_read_ready_lock, lj_exp_ready_lock, pipe_recv):
-        u6.U6.__init__(self)
-        self.running = False
-        self.hard_stopped = False
-        self.connected = False
-        self.time_start_read = datetime.now()
-        ##########################################################
-        # Threading Controls
-        # Locks to wait on:
-        self.ard_ready_lock = ard_ready_lock
-        self.cmr_ready_lock = cmr_ready_lock
-        # Locks to control:
-        self.lj_read_ready_lock = lj_read_ready_lock
-        self.lj_exp_ready_lock = lj_exp_ready_lock
-        # Queues:
-        self.data_queue = Queue.Queue()
-        self.missed_queue = Queue.Queue()
-        self.status_queue = master_gui_queue
-        self.pipe_recv = pipe_recv
-        ##########################################################
-        # Pickled variables
-        self.lj_last_used = None
-        self.total_time = None
-        self.results_dir = None
-        ###
-        # Hardware Parameters
-        self.ch_num = [0]
-        self.scan_freq = 1
-        self.n_ch = 1
-        self.streamSamplesPerPacket = 25
-        self.packetsPerRequest = 48
-        self.streamChannelNumbers = self.ch_num
-        self.streamChannelOptions = [0] * self.n_ch
-
-    def check_connection(self):
-        """Checks if LabJack is ready to be connected to"""
-        self.status_queue.put_nowait('<lj>Connecting to LabJack...')
-        try:
-            self.close()
-            self.open()
-            self.status_queue.put('<lj>Connected to LabJack!')
-            self.connected = True
-            return
-        except LabJackException:
-            try:
-                self.streamStop()
-                self.close()
-                self.open()
-                self.status_queue.put('<lj>Connected to LabJack!')
-                self.connected = True
-                return
-            except (LabJackException, LowlevelErrorException):
-                try:
-                    self.status_queue.put('<lj>Failed. Attempting a Hard Reset...')
-                    self.hardReset()
-                    time.sleep(2.5)
-                    self.open()
-                    self.status_queue.put('<lj>Connected to LabJack!')
-                    self.connected = True
-                    return
-                except LabJackException:
-                    self.status_queue.put('<lj>** LabJack cannot be reached! '
-                                          'Please reconnect the device.')
-                    self.connected = False
-                    return
-
-    def reinitialize_vars(self):
-        """Reloads channel and freq information from settings
-        in case they were changed. call this before any lj streaming"""
-        self.ch_num = self.lj_last_used['ch_num']
-        self.scan_freq = self.lj_last_used['scan_freq']
-        self.n_ch = len(self.ch_num)
-
-    @staticmethod
-    def find_packets_per_req(scanFreq, nCh):
-        """Returns optimal packets per request to use"""
-        if nCh == 7:
-            high = 42
-        else:
-            high = 48
-        hold = []
-        for i in range(scanFreq + 1):
-            if i % 25 == 0 and i % nCh == 0:
-                hold.append(i)
-        hold = np.asarray(hold)
-        hold = min(high, max(hold / 25))
-        hold = max(1, hold)
-        return hold
-
-    @staticmethod
-    def find_samples_per_pack(scanFreq, nCh):
-        """Returns optimal samples per packet to use"""
-        hold = []
-        for i in range(scanFreq + 1):
-            if i % nCh == 0:
-                hold.append(i)
-        return max(hold)
-
-    # noinspection PyDefaultArgument
-    def streamConfig(self, NumChannels=1, ResolutionIndex=0,
-                     SamplesPerPacket=25, SettlingFactor=0,
-                     InternalStreamClockFrequency=0, DivideClockBy256=False,
-                     ScanInterval=1, ChannelNumbers=[0],
-                     ChannelOptions=[0], ScanFrequency=None,
-                     SampleFrequency=None):
-        """Sets up Streaming settings"""
-        if NumChannels != len(ChannelNumbers) or NumChannels != len(ChannelOptions):
-            raise LabJackException("NumChannels must match length "
-                                   "of ChannelNumbers and ChannelOptions")
-        if len(ChannelNumbers) != len(ChannelOptions):
-            raise LabJackException("len(ChannelNumbers) doesn't "
-                                   "match len(ChannelOptions)")
-        if (ScanFrequency is not None) or (SampleFrequency is not None):
-            if ScanFrequency is None:
-                ScanFrequency = SampleFrequency
-            if ScanFrequency < 1000:
-                if ScanFrequency < 25:
-                    # below 25 ScanFreq, S/P is some multiple of nCh less than SF.
-                    SamplesPerPacket = self.find_samples_per_pack(ScanFrequency, NumChannels)
-                DivideClockBy256 = True
-                ScanInterval = 15625 / ScanFrequency
-            else:
-                DivideClockBy256 = False
-                ScanInterval = 4000000 / ScanFrequency
-        ScanInterval = min(ScanInterval, 65535)
-        ScanInterval = int(ScanInterval)
-        ScanInterval = max(ScanInterval, 1)
-        SamplesPerPacket = max(SamplesPerPacket, 1)
-        SamplesPerPacket = int(SamplesPerPacket)
-        SamplesPerPacket = min(SamplesPerPacket, 25)
-        command = [0] * (14 + NumChannels * 2)
-        # command[0] = Checksum8
-        command[1] = 0xF8
-        command[2] = NumChannels + 4
-        command[3] = 0x11
-        # command[4] = Checksum16 (LSB)
-        # command[5] = Checksum16 (MSB)
-        command[6] = NumChannels
-        command[7] = ResolutionIndex
-        command[8] = SamplesPerPacket
-        # command[9] = Reserved
-        command[10] = SettlingFactor
-        command[11] = (InternalStreamClockFrequency & 1) << 3
-        if DivideClockBy256:
-            command[11] |= 1 << 1
-        t = pack("<H", ScanInterval)
-        command[12] = ord(t[0])
-        command[13] = ord(t[1])
-        for i in range(NumChannels):
-            command[14 + (i * 2)] = ChannelNumbers[i]
-            command[15 + (i * 2)] = ChannelOptions[i]
-        self._writeRead(command, 8, [0xF8, 0x01, 0x11])
-        self.streamSamplesPerPacket = SamplesPerPacket
-        self.streamChannelNumbers = ChannelNumbers
-        self.streamChannelOptions = ChannelOptions
-        self.streamConfiged = True
-        # Only happens for ScanFreq < 25, in which case
-        # this number is generated as described above
-        if SamplesPerPacket < 25:
-            self.packetsPerRequest = 1
-        elif SamplesPerPacket == 25:  # For all ScanFreq > 25.
-            self.packetsPerRequest = self.find_packets_per_req(ScanFrequency, NumChannels)
-            # Such that PacketsPerRequest*SamplesPerPacket % NumChannels == 0,
-            # where min P/R is 1 and max 48 for nCh 1-6,8
-            # and max 42 for nCh 7.
-
-    def read_with_counter(self, num_requests, datacount_hold):
-        """Given a number of requests, pulls data from labjack
-         and returns number of data points pulled"""
-        reading = True
-        datacount = 0
-        while reading:
-            if not self.running:
-                break
-            return_dict = self.streamData(convert=False).next()
-            self.data_queue.put_nowait(deepcopy(return_dict))
-            datacount += 1
-            if datacount >= num_requests:
-                reading = False
-        datacount_hold.append(datacount)
-
-    # noinspection PyUnboundLocalVariable
-    def read_stream_data(self):
-        """Reads from stream and puts in queue"""
-        # pulls lj config and sets up the stream
-        self.reinitialize_vars()
-        self.getCalibrationData()
-        self.streamConfig(NumChannels=self.n_ch, ChannelNumbers=self.ch_num,
-                          ChannelOptions=[0] * self.n_ch, ScanFrequency=self.scan_freq)
-        datacount_hold = []
-        ttl_time = self.total_time
-        max_requests = int(math.ceil(
-            (float(self.scan_freq * self.n_ch * ttl_time / 1000) / float(
-                self.packetsPerRequest * self.streamSamplesPerPacket))))
-        small_request = int(round(
-            (float(self.scan_freq * self.n_ch * 0.5) / float(
-                self.packetsPerRequest * self.streamSamplesPerPacket))))
-        # We will read 3 segments: 0.5s before begin exp, during exp, and 0.5s after exp
-        # 1. wait until arduino and camera are ready
-        self.ard_ready_lock.wait()
-        self.cmr_ready_lock.wait()
-        # 2. notify master gui that we've begun
-        self.status_queue.put_nowait('<lj>Started Streaming.')
-        ####################################################################
-        # STARTED STREAMING
-        self.time_start_read = datetime.now()
-        # begin the stream; this should happen as close to actual streaming as possible
-        # to avoid dropping data
-        try:
-            self.streamStart()
-        except LowlevelErrorException:
-            self.streamStop()  # happens if a previous instance was not closed properly
-            self.streamStart()
-        self.lj_read_ready_lock.set()
-        self.running = True
-        while self.running:
-            # at anytime, this can be disrupted by a hardstop from the main thread
-            # 1. 0.5s before exp start; extra collected to avoid missing anything
-            self.read_with_counter(small_request, datacount_hold)
-            # 2. read for duration of time specified in dirs.settings.ard_last_used['packet'][3]
-            self.lj_exp_ready_lock.set()  # we also unblock arduino and camera threads
-            self.status_queue.put_nowait('<ljst>')
-            time_start = datetime.now()
-            self.read_with_counter(max_requests, datacount_hold)
-            time_stop = datetime.now()
-            # 3. read for another 0.5s after
-            self.read_with_counter(small_request, datacount_hold)
-            time_stop_read = datetime.now()
-            self.running = False
-        self.streamStop()
-        self.running = False  # redundant but just in case
-        if not self.hard_stopped:
-            self.status_queue.put_nowait('<lj>Finished Successfully.')
-        elif self.hard_stopped:
-            self.status_queue.put_nowait('<lj>Terminated Stream.')
-            self.hard_stopped = False
-        self.lj_read_ready_lock.clear()
-        self.lj_exp_ready_lock.clear()
-        ####################################################################
-        # now we do some reporting
-        missed_list_msg = self.missed_queue.get()
-        # samples taken for each interval:
-        multiplier = self.packetsPerRequest * self.streamSamplesPerPacket
-        datacount_hold = (np.asarray(datacount_hold)) * multiplier
-        total_samples = sum(i for i in datacount_hold)
-        # total run times for each interval
-        before_run_time = time_diff(start_time=self.time_start_read, end_time=time_start, choice='micros')
-        run_time = time_diff(start_time=time_start, end_time=time_stop, choice='micros')
-        after_run_time = time_diff(start_time=time_stop, end_time=time_stop_read, choice='micros')
-        total_run_time = time_diff(start_time=self.time_start_read, end_time=time_stop_read, choice='micros')
-        # Reconstruct when and where missed values occured
-        missed_before, missed_during, missed_after = 0, 0, 0
-        if len(missed_list_msg) != 0:
-            for i in missed_list_msg:
-                if i[1] <= float(int(before_run_time)) / 1000:
-                    missed_before += i[0]
-                elif float(int(before_run_time)) / 1000 < i[1] <= (float(int(
-                        before_run_time)) + float(int(run_time))) / 1000:
-                    missed_during += i[0]
-                elif (float(int(before_run_time)) + float(int(run_time))) / 1000 < i[1] <= (float(int(
-                        before_run_time)) + float(int(run_time)) + float(int(after_run_time))) / 1000:
-                    missed_after += i[0]
-        missed_total = missed_before + missed_during + missed_after
-        # actual sampling frequencies
-        try:
-            overall_smpl_freq = int(round(float(total_samples) * 1000) / total_run_time)
-        except ZeroDivisionError:
-            overall_smpl_freq = 0
-        overall_scan_freq = overall_smpl_freq / self.n_ch
-        try:
-            exp_smpl_freq = int(round(float(datacount_hold[1]) * 1000) / run_time)
-        except ZeroDivisionError:
-            exp_smpl_freq = 0
-        exp_scan_freq = exp_smpl_freq / self.n_ch
-        self.status_queue.put_nowait('<ljr>{},{},{},{},{},{},{},{},{},{},{},{},n/a,{},n/a,{},n/a,{},n/a,{}'
-                                     ''.format(float(before_run_time) / 1000,
-                                               float(run_time) / 1000, float(after_run_time) / 1000,
-                                               float(total_run_time) / 1000,
-                                               datacount_hold[0], datacount_hold[1], datacount_hold[2],
-                                               total_samples, missed_before, missed_during, missed_after,
-                                               missed_total, exp_smpl_freq, overall_smpl_freq, exp_scan_freq,
-                                               overall_scan_freq))
-
-    def data_write_plot(self):
-        """Reads from data queue and writes to file/plots"""
-        self.missed_queue.queue.clear()
-        missed_total, missed_list = 0, []
-        save_file_name = '[name]--{}'.format(format_daytime(options='daytime'))
-        with open(self.results_dir + save_file_name + '.csv', 'w') as save_file:
-            for i in range(self.n_ch):
-                save_file.write('AIN{},'.format(self.ch_num[i]))
-            save_file.write('\n')
-            self.lj_read_ready_lock.wait()  # wait for the go ahead from read_stream_data
-            while self.running:
-                if not self.running:
-                    self.data_queue.queue.clear()
-                    break
-                result = self.data_queue.get()
-                if result['errors'] != 0:
-                    missed_total += result['missed']
-                    self.status_queue.put_nowait('<ljm>{}'.format(missed_total))
-                    missed_time = datetime.now()
-                    timediff = time_diff(start_time=self.time_start_read,
-                                         end_time=missed_time)
-                    missed_list.append([deepcopy(result['missed']),
-                                        deepcopy(float(timediff) / 1000)])
-                r = self.processStreamData(result['result'])
-                for each in range(len(r['AIN{}'.format(self.ch_num[0])])):
-                    for i in range(self.n_ch):
-                        save_file.write(str(r['AIN{}'.format(self.ch_num[i])][each]) + ',')
-                    save_file.write('\n')
-            self.missed_queue.put_nowait(missed_list)
 
 
 #################################################################
@@ -3625,6 +3645,7 @@ class MainSettings(object):
                               'pwm_pack': []}
         self.lj_presets = {}
         self.ard_presets = {}
+        self.debug_console = False
 
     def load_examples(self):
         """Example settings"""
@@ -3645,10 +3666,11 @@ class MainSettings(object):
         self.lj_presets = {'example': {'ch_num': [0, 1, 2, 10, 11],
                                        'scan_freq': 6250}}
         self.ard_presets = {'example':
-                                {'packet': ['<BBLHHH', 255, 255, 180000, 1, 2, 0],
-                                 'tone_pack': [['<LLH', 120000, 150000, 2800]],
-                                 'out_pack': [['<LB', 148000, 4], ['<LB', 150000, 4]],
-                                 'pwm_pack': []}}
+                            {'packet': ['<BBLHHH', 255, 255, 180000, 1, 2, 0],
+                             'tone_pack': [['<LLH', 120000, 150000, 2800]],
+                             'out_pack': [['<LB', 148000, 4], ['<LB', 150000, 4]],
+                             'pwm_pack': []}}
+        self.debug_console = False
 
     def quick_ard(self):
         """
