@@ -258,45 +258,61 @@ class LiveGraph(Tk.Frame):
     def __init__(self, *args, **kwargs):
         # noinspection PyTypeChecker,PyCallByClass
         Tk.Frame.__init__(self, *args, **kwargs)
-        self.canvas = Tk.Canvas(self, background="#EFEFEF", height=216, width=600)
-        self.canvas.pack(side="top", fill="both", expand=True)
+        self.line_canvas = Tk.Canvas(self, background='#EFEFEF', height=216, width=580)
+        self.line_canvas.grid(column=1, row=0)
+        self.line_canvas.grid_rowconfigure(0, weight=1, uniform='x')
+        self.label_canvas = Tk.Canvas(self, background='#EFEFEF', height=216, width=20)
+        self.label_canvas.grid(column=0, row=0)
+        self.label_canvas.grid_rowconfigure(1, weight=1, uniform='x')
         # color scheme
-        self.color_scheme = ['red', 'blue', '#206760', '#8a6fa8',
-                             '#d09163', '#d0c963', '#3e817a', '#8a6fa8']
+        self.color_scheme = ['#5da5da', '#faa43a', '#60bd68', '#f17cb0',
+                             '#b2912f', '#b276b2', '#decf3f', '#f15854']
         self.lines = None
+        self.line_labels = None
         self.create_new_lines()
 
     def create_new_lines(self):
         """creates 8 lines, corresponding to the 8 max channels on
         labjack"""
         self.lines = []
+        self.line_labels = []
+        lj_ch_num = deepcopy(dirs.settings.lj_last_used['ch_num'])
+        lj_ch_num = lj_ch_num[::-1]
         for i in range(8):
-            self.lines.append(self.canvas.create_line(0, 0, 0, 0, fill=self.color_scheme[i]))
+            self.lines.append(self.line_canvas.create_line(0, 0, 0, 0, fill=self.color_scheme[i]))
+        reverse_colors = (deepcopy(self.color_scheme)[:len(lj_ch_num)])[::-1]
+        for i in range(len(lj_ch_num)):
+            self.line_labels.append(self.label_canvas.create_text(1, 27 * i + 8, anchor=Tk.NW,
+                                                                  fill=reverse_colors[i],
+                                                                  text='{:0>2}'.format(lj_ch_num[i]),
+                                                                  font=tkFont.Font(family='Arial', size=7)))
 
     def clear_plot(self):
         """clears existing lines on the graph"""
         for i in range(8):
-            self.canvas.delete(self.lines[i])
+            self.line_canvas.delete(self.lines[i])
+        for i in self.line_labels:
+            self.label_canvas.delete(i)
 
     def update_plot(self, *args):
         """Updates data on the plot"""
         for i in range(len(args[0])):
             self.add_point(self.lines[i], args[0][i])
-        self.canvas.xview_moveto(1.0)
+        self.line_canvas.xview_moveto(1.0)
 
     def add_point(self, line, y):
         """adds new data to existing plot"""
-        coords = self.canvas.coords(line)
+        coords = self.line_canvas.coords(line)
         x = coords[-2] + 1
         coords.append(x)
         coords.append(y)
         coords = coords[:]  # keep # of points to a manageable size
-        self.canvas.coords(line, *coords)
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self.line_canvas.coords(line, *coords)
+        self.line_canvas.configure(scrollregion=self.line_canvas.bbox("all"))
 
 
 # noinspection PyClassicStyleClass,PyTypeChecker
-class SimpleTable(Tk.Frame):
+class SimpleTable(object, Tk.Frame):
     """Creates a table with defined rows and columns
     modifiable via a set command"""
     # noinspection PyCallByClass
@@ -307,13 +323,13 @@ class SimpleTable(Tk.Frame):
             for column in range(columns):
                 if column == highlight_column:
                     label = Tk.Label(self, textvariable=self.text_var[row][column],
-                                     borderwidth=0, width=12, height=2,
-                                     text=tkFont.Font(family='Arial', size=8),
+                                     borderwidth=0, width=10, height=1,
+                                     font=tkFont.Font(root=master, family='Arial', size=8),
                                      bg=highlight_color)
                 else:
                     label = Tk.Label(self, textvariable=self.text_var[row][column],
-                                     borderwidth=0, width=12, height=2,
-                                     text=tkFont.Font(family='Arial', size=8))
+                                     borderwidth=0, width=10, height=1,
+                                     font=tkFont.Font(root=master, family='Helvetica', size=8))
                 label.grid(row=row, column=column, sticky='nsew', padx=1, pady=1)
                 self.text_var[row][column].set('')
         for column in range(columns):
@@ -543,7 +559,7 @@ class LabJackGUI(GUI):
         self.preset_menu = Tk.OptionMenu(preset_frame, self.preset_chosen,
                                          *self.preset_list,
                                          command=self.preset_list_choose)
-        self.preset_menu.config(width=20)
+        self.preset_menu.config(width=10)
         self.preset_menu.pack(side=Tk.TOP)
         # Save New Presets
         new_preset_frame = Tk.LabelFrame(right_frame, text='(Optional): '
@@ -772,7 +788,7 @@ class ArduinoGUI(GUI):
         self.closebutton.pack(side=Tk.TOP)
         scroll_frame.finalize()
         # Finish setup
-        self.platform_geometry(windows='250x325', darwin='257x272')
+        self.platform_geometry(windows='308x420', darwin='257x272')
 
     def pwm_setup(self):
         """PWM Config"""
@@ -780,7 +796,7 @@ class ArduinoGUI(GUI):
         self.types = 'pwm'
         num_pins, self.num_entries = 5, 15
         scroll_frame = ScrollFrame(self.root, num_pins,
-                                   self.num_entries + 1, bottom_padding=24)
+                                   self.num_entries + 1, bottom_padding=50)
         # Usage instructions
         info_frame = Tk.LabelFrame(scroll_frame.top_frame,
                                    text='Enable Arduino Pins')
@@ -834,7 +850,7 @@ class ArduinoGUI(GUI):
         self.closebutton.pack(side=Tk.TOP)
         scroll_frame.finalize()
         # Finish Setup
-        self.platform_geometry(windows='855x350', darwin='1100x280')
+        self.platform_geometry(windows='1070x440', darwin='1100x280')
 
     def output_setup(self):
         """Output GUI"""
@@ -891,7 +907,7 @@ class ArduinoGUI(GUI):
         scroll_frame.finalize()
         # Finish Setup
         self.center()
-        self.platform_geometry(windows='983x350', darwin='1110x272')
+        self.platform_geometry(windows='1198x430', darwin='1110x272')
 
     def button_toggle(self, tags):
         """Toggles the selected pin button"""
@@ -1420,9 +1436,10 @@ class MasterGUI(GUI):
         self.master = self.root
         self.master.title('Freeze Frame Clone')
         # Fonts
-        self.time_label_font = tkFont.Font(family='Arial', size=8)
+        self.time_label_font = tkFont.Font(family='Arial', size=6)
         self.label_font = tkFont.Font(family='Arial', size=10)
         self.label_font_symbol = tkFont.Font(family='Arial', size=9)
+        self.small_label_font = tkFont.Font(family='Arial', size=7)
         self.main_button_font = tkFont.Font(family='Arial', size=10, weight='bold')
         # Widget Configs
         self.single_widget_dim = 100
@@ -1472,7 +1489,7 @@ class MasterGUI(GUI):
     def render_photometry(self):
         """sets up photometry component"""
         frame = Tk.LabelFrame(self.master, text='Optional Photometry Config.',
-                              width=self.single_widget_dim * 2,
+                              width=self.single_widget_dim,
                               height=self.single_widget_dim)
         frame.grid(row=0, column=0, sticky=self.ALL)
         # Variables
@@ -1524,7 +1541,7 @@ class MasterGUI(GUI):
                                                *self.save_dir_list,
                                                command=lambda path:
                                                self.save_button_options(inputs=path))
-        self.save_dir_menu.config(width=40)
+        self.save_dir_menu.config(width=29)
         self.save_dir_menu.grid(sticky=self.ALL, columnspan=2)
         # 2b. Secondary Save Frame: New Saves
         new_frame = Tk.LabelFrame(frame, text='Create a New Save Location')
@@ -1560,14 +1577,15 @@ class MasterGUI(GUI):
                                           command=self.lj_config)
         self.lj_config_button.pack(side=Tk.BOTTOM, expand=True)
         # Post experiment LabJack report frame
-        report_frame = Tk.LabelFrame(self.master, text='LabJack Stream Data')
+        report_frame = Tk.LabelFrame(self.master, text='LabJack Stream Data (20 Hz Scanning)')
         report_frame.grid(row=3, column=1, sticky=self.ALL)
-        Tk.Label(report_frame, text='Post Experiment Report').grid(row=0, column=2, sticky=self.ALL)
+        # labjack stream and post exp report items
+        Tk.Label(report_frame, text='\nPost Experiment Report\n').grid(row=0, column=3, sticky=self.ALL)
         self.lj_table = SimpleTable(report_frame, 6, 5, highlight_column=2, highlight_color='#72ab97')
-        self.lj_table.grid(row=1, column=2, sticky=self.ALL)
+        self.lj_table.grid(row=1, column=3, sticky=self.ALL)
         self.lj_report_table_config()
         self.lj_graph = LiveGraph(report_frame)
-        self.lj_graph.grid(row=0, column=0, columnspan=2, rowspan=1000, sticky=self.ALL)
+        self.lj_graph.grid(row=0, column=1, columnspan=2, rowspan=1000, sticky=self.ALL)
 
     # noinspection PyAttributeOutsideInit
     def render_arduino(self):
@@ -1584,12 +1602,13 @@ class MasterGUI(GUI):
                  text='Last used settings shown. '
                       'Rollover individual segments for '
                       'specific stimuli configuration info.',
+                 font=self.small_label_font,
                  relief=Tk.RAISED).grid(row=0, columnspan=55, sticky=self.ALL)
         # Debug Buttons
-        self.debug_button = Tk.Button(ard_frame, text='DEBUG',
+        self.debug_button = Tk.Button(ard_frame, text='DEBUG', font=self.small_label_font,
                                       command=self.gui_debug)
         self.debug_button.grid(row=0, column=80, columnspan=10, sticky=self.ALL)
-        self.clr_svs_button = Tk.Button(ard_frame, text='ClrSvs',
+        self.clr_svs_button = Tk.Button(ard_frame, text='ClrSvs', font=self.small_label_font,
                                         command=self.clear_saves)
         self.clr_svs_button.grid(row=0, column=90, columnspan=10, sticky=self.ALL)
         self.debug_chk_var = Tk.IntVar()
@@ -1665,15 +1684,17 @@ class MasterGUI(GUI):
                                           self.ard_config(types))
         self.pwm_setup_button.grid(row=6, column=0, sticky=self.ALL)
         # Status messages for devices
-        Tk.Label(ard_frame, text='Devices:  ', relief=Tk.RAISED).grid(row=0, column=60,
-                                                                      columnspan=10,
-                                                                      sticky=self.ALL)
+        Tk.Label(ard_frame, text='Enable:', relief=Tk.RAISED,
+                 font=tkFont.Font(family='Arial', size='7')).grid(row=0, column=55,
+                                                                  columnspan=15,
+                                                                  sticky=self.ALL)
         # arduino
         self.ard_status_bar = Tk.StringVar()
-        Tk.Label(ard_frame, anchor=Tk.E, text='Arduino Status:  ').grid(row=4, column=10,
-                                                                        columnspan=20,
-                                                                        sticky=Tk.E)
-        ard_status_display = Tk.Label(ard_frame, anchor=Tk.W,
+        Tk.Label(ard_frame, anchor=Tk.E, text='Arduino:  ',
+                 font=self.small_label_font).grid(row=4, column=10,
+                                                  columnspan=20,
+                                                  sticky=Tk.E)
+        ard_status_display = Tk.Label(ard_frame, anchor=Tk.W, font=self.small_label_font,
                                       textvariable=self.ard_status_bar,
                                       relief=Tk.SUNKEN)
         ard_status_display.grid(row=4, column=30, columnspan=68, sticky=self.ALL)
@@ -1689,10 +1710,10 @@ class MasterGUI(GUI):
         self.ard_toggle_button.grid(row=0, column=70, sticky=Tk.E)
         # LabJack
         self.lj_status_bar = Tk.StringVar()
-        Tk.Label(ard_frame, anchor=Tk.E, text='LabJack Status:  ').grid(row=5, column=10,
-                                                                        columnspan=20,
-                                                                        sticky=Tk.E)
-        lj_status_display = Tk.Label(ard_frame, anchor=Tk.W,
+        Tk.Label(ard_frame, anchor=Tk.E, text='LabJack:  ', font=self.small_label_font).grid(row=5, column=10,
+                                                                                                    columnspan=20,
+                                                                                                    sticky=Tk.E)
+        lj_status_display = Tk.Label(ard_frame, anchor=Tk.W, font=self.small_label_font,
                                      textvariable=self.lj_status_bar,
                                      relief=Tk.SUNKEN)
         lj_status_display.grid(row=5, column=30, columnspan=68, sticky=self.ALL)
@@ -1708,10 +1729,11 @@ class MasterGUI(GUI):
         self.lj_toggle_button.grid(row=0, column=72, sticky=Tk.E)
         # Camera
         self.cmr_status_bar = Tk.StringVar()
-        Tk.Label(ard_frame, anchor=Tk.E, text='Camera Status:  ').grid(row=6, column=10,
-                                                                       columnspan=20, sticky=Tk.E)
+        Tk.Label(ard_frame, anchor=Tk.E, text='Camera:  ',
+                 font=self.small_label_font).grid(row=6, column=10,
+                                                  columnspan=20, sticky=Tk.E)
         cmr_status_display = Tk.Label(ard_frame, anchor=Tk.W, textvariable=self.cmr_status_bar,
-                                      relief=Tk.SUNKEN)
+                                      relief=Tk.SUNKEN, font=self.small_label_font)
         cmr_status_display.grid(row=6, column=30, columnspan=68, sticky=self.ALL)
         self.cmr_status_bar.set('null')
         self.cmr_toggle_var = Tk.IntVar()
@@ -1725,10 +1747,11 @@ class MasterGUI(GUI):
         self.cmr_toggle_button.grid(row=0, column=74, sticky=Tk.E)
         # Save Status
         self.save_status_bar = Tk.StringVar()
-        Tk.Label(ard_frame, anchor=Tk.E, text='Save Status:  ').grid(row=7, column=10,
-                                                                     columnspan=20, sticky=Tk.E)
+        Tk.Label(ard_frame, anchor=Tk.E, text='Saves:  ',
+                 font=self.small_label_font).grid(row=7, column=10,
+                                                  columnspan=20, sticky=Tk.E)
         save_status_display = Tk.Label(ard_frame, anchor=Tk.W, textvariable=self.save_status_bar,
-                                       relief=Tk.SUNKEN)
+                                       relief=Tk.SUNKEN, font=self.small_label_font)
         save_status_display.grid(row=7, column=30, columnspan=68, sticky=self.ALL)
         self.save_status_bar.set('null')
 
@@ -1824,10 +1847,10 @@ class MasterGUI(GUI):
         self.lj_table.set_var(0, 3, 'After')
         self.lj_table.set_var(0, 4, 'Total')
         self.lj_table.set_var(1, 0, 'Time (s)')
-        self.lj_table.set_var(2, 0, 'Smpls Taken')
-        self.lj_table.set_var(3, 0, 'Smpls Missed')
-        self.lj_table.set_var(4, 0, 'Smpl Freq (Hz)')
-        self.lj_table.set_var(5, 0, 'Scan Freq (Hz)')
+        self.lj_table.set_var(2, 0, '# Samples')
+        self.lj_table.set_var(3, 0, '# Missed')
+        self.lj_table.set_var(4, 0, 'Sample Hz')
+        self.lj_table.set_var(5, 0, 'Scan Hz')
 
     # noinspection PyAttributeOutsideInit
     def render_camera(self):
@@ -2093,6 +2116,7 @@ class MasterGUI(GUI):
         """streams data from labjack"""
         try:
             data = self.master_graph_queue.get_nowait()
+            #  print self.master_graph_queue.qsize()
         except Queue.Empty:
             pass
         else:
@@ -2101,7 +2125,7 @@ class MasterGUI(GUI):
             self.lj_graph.clear_plot()
             self.lj_graph.create_new_lines()
             self.clear_lj_plot = False
-        self.master.after(30, self.lj_graph_stream)
+        self.master.after(15, self.lj_graph_stream)
 
     # Photometry GUI Functions
     #####################################################################
@@ -2450,7 +2474,8 @@ class MasterGUI(GUI):
                                                                fill='red')
         self.progress_text = self.ard_canvas.create_text(35, 0,
                                                          fill='white',
-                                                         anchor=Tk.N)
+                                                         anchor=Tk.N,
+                                                         font=self.small_label_font)
         self.progbar = ProgressBar(self.master,
                                    self.ard_canvas,
                                    self.progress_shape,
@@ -2964,7 +2989,7 @@ class LJProcessHandler(multiprocessing.Process):
             except (LabJackException, LowlevelErrorException):
                 self.master_dump_queue.put_nowait('<lj>** LabJack could not be initialized! '
                                                   'Please perform a manual hard reset (disconnect'
-                                                  ' then reconnect)')
+                                                  '/reconnect)')
                 self.lj_created = False
                 self.thread_dump_queue.put_nowait('<lj_create_failed>')
 
@@ -3336,7 +3361,7 @@ class LabJackU6(u6.U6):
                 if time_diff(self.time_start_read) / data_to_master_counter >= 50:
                     to_send = []
                     for i in range(self.n_ch):
-                        to_send.append((r['AIN{}'.format(self.ch_num[i])][0]) * (-27) / 5 + (-27) * (i - 1))
+                        to_send.append((r['AIN{}'.format(self.ch_num[i])][0]) * (-27) / 5 + (-27) * (i - 1.5))
                     self.master_gui_graph_queue.put_nowait(to_send)
                     data_to_master_counter += 1
                     if not self.running:
