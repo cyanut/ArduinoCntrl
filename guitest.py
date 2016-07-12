@@ -1798,7 +1798,7 @@ class MasterGUI(GUI):
         try:
             msg = self.master_dump_queue.get_nowait()
             if dirs.settings.debug_console:
-                print msg
+                print 'MG -- ', msg
             if msg == '<ex_succ>':
                 self.master.destroy()
                 self.master.quit()
@@ -2675,7 +2675,7 @@ class GUIThreadHandler(threading.Thread):
                 elif msg == '<exit>':
                     self.close_devices()
                 if dirs.settings.debug_console:
-                    print msg
+                    print 'TH -- ', msg
             if self.devices_created and self.exp_is_running:
                 devices_to_check = []
                 if self.cmr_use:
@@ -2720,7 +2720,7 @@ class GUIThreadHandler(threading.Thread):
         if self.lj_use and not self.lj_created:
             lj_status = self.thread_dump_queue.get()
             if dirs.settings.debug_console:
-                print lj_status
+                print 'TH -- ', lj_status
             if lj_status == '<lj_created>':
                 self.lj_created = True
             elif lj_status == '<lj_create_failed>':
@@ -2827,8 +2827,6 @@ class LJProcessHandler(multiprocessing.Process):
             time.sleep(0.01)
             try:
                 msg = self.process_dump_queue.get_nowait()
-                if self.settings.debug_console:
-                    print msg
             except Queue.Empty:
                 pass
             else:
@@ -2878,6 +2876,8 @@ class LJProcessHandler(multiprocessing.Process):
                     for i in range(len(threads)):
                         thread_list.append([i, threads[i].name])
                     self.master_dump_queue.put_nowait('<threads>{}'.format(thread_list))
+                if self.settings.debug_console:
+                    print 'CP -- ', msg
                 if self.lj_created and not self.lj_device.running and self.exp_is_running:
                     self.thread_dump_queue.put_nowait('<lj_run_false>')
                     self.exp_is_running = False
@@ -2932,7 +2932,7 @@ class LJProcessHandler(multiprocessing.Process):
                         print 'LabJack Closed Successfully [N]'
                 except LabJackException:
                     if self.settings.debug_console:
-                        print 'Bad LabJack Close.'
+                        print 'LabJack Close Unsuccessful.'
                     lj_error = True
         except AttributeError:
             pass
