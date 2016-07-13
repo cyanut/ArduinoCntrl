@@ -43,7 +43,6 @@ from LabJackPython import LowlevelErrorException, LabJackException
 # - Arduino GUI Geometry fine tuning
 # - Arduino optiboot.c loader: remove led flash on start?
 # - Debugging of everything that could go wrong
-# - adding start/stop conditionals for camera
 # - correct status messages for every device for every stage
 #################################################################
 # Concurrency Controls:
@@ -270,8 +269,8 @@ class LiveGraph(Tk.Frame):
         self.label_canvas.grid(column=0, row=0)
         self.label_canvas.grid_rowconfigure(1, weight=1, uniform='x')
         # color scheme
-        self.color_scheme = ['#5da5da', '#faa43a', '#60bd68', '#f17cb0',
-                             '#b2912f', '#b276b2', '#decf3f', '#f15854']
+        self.color_scheme = ['#60B388', '#D6730F', '#331714', '#4894AC',
+                             '#B05A9A', '#31527D', '#AD8488', '#B5120B']
         self.lines = None
         self.line_labels = None
         self.create_new_lines()
@@ -284,13 +283,15 @@ class LiveGraph(Tk.Frame):
         lj_ch_num = deepcopy(dirs.settings.lj_last_used['ch_num'])
         lj_ch_num = lj_ch_num[::-1]
         for i in range(8):
-            self.lines.append(self.line_canvas.create_line(0, 0, 0, 0, fill=self.color_scheme[i]))
+            self.lines.append(self.line_canvas.create_line(0, 27 * i, 0, 27 * i, fill=self.color_scheme[i],
+                                                           width=1.3, smooth=True))
         reverse_colors = (deepcopy(self.color_scheme)[:len(lj_ch_num)])[::-1]
         for i in range(len(lj_ch_num)):
             self.line_labels.append(self.label_canvas.create_text(1, 27 * i + 8, anchor=Tk.NW,
                                                                   fill=reverse_colors[i],
                                                                   text='{:0>2}'.format(lj_ch_num[i]),
-                                                                  font=tkFont.Font(family='Arial', size=7)))
+                                                                  font=tkFont.Font(family='Arial', size=7,
+                                                                                   weight=tkFont.BOLD)))
 
     def clear_plot(self):
         """clears existing lines on the graph"""
