@@ -58,6 +58,8 @@ CMR_READY_LOCK = multiprocessing.Event()
 FORBIDDEN_CHARS = ['#', '<', '>', '$', '+', '%', '!', '`',
                    '&', '*', '\'', '|', '{', '}', '?', '"',
                    '=', '/', ':', '\\', '@']
+# Enable this if making an executable
+EXECUTABLE = False
 ###################################################################
 
 
@@ -1965,49 +1967,60 @@ class MasterGUI(GUI):
     # noinspection PyDefaultArgument
     def gui_debug(self, request_threads=True, msg=[]):
         """Under the hood stuff printed when press debug button"""
-        if request_threads:
-            self.process_dump_queue.put_nowait('<thr>')
+        if EXECUTABLE:
+            tkMb.showinfo('Attn!', 'Please use the Debug Console version'
+                                   ' of Mouse House for this feature.')
             return
-        print '#' * 40 + '\nDEBUG\n' + '#' * 40
-        print '\nSETTINGS'
-        pprint(vars(dirs.settings))
-        print '#' * 15
-        print 'CAMERA QUEUE COUNT: {}'.format(self.thread_handler.cmr_device.data_queue.qsize())
-        print '#' * 15
-        print 'ACTIVE PROCESSES: {}'.format(len(multiprocessing.active_children()) + 1)
-        #########################################################
-        main_threads = threading.enumerate()
-        main_threads_list = []
-        main_threads_qfts = 0
-        for i in main_threads:
-            if i.name != 'QueueFeederThread':
-                main_threads_list.append(i.name)
-            else:
-                main_threads_qfts += 1
-        print ' - Main Process Threads ({}):'.format(threading.active_count())
-        for i in range(len(main_threads_list)):
-            print '   {} - {}'.format(i + 1, main_threads_list[i])
-        print '     + [{}x] QueueFeederThreads'.format(main_threads_qfts)
-        print ' - {} Threads ({}):'.format(multiprocessing.active_children()[0].name, len(msg))
-        proc_threads_list = []
-        proc_threads_qfts = 0
-        for i in msg:
-            if i[1] != 'QueueFeederThread':
-                proc_threads_list.append(i[1])
-            else:
-                proc_threads_qfts += 1
-        for i in range(len(proc_threads_list)):
-            print '   {} - {}'.format(i + 1, proc_threads_list[i])
-        print '     + [{}x] QueueFeederThreads'.format(proc_threads_qfts)
+        else:
+            if request_threads:
+                self.process_dump_queue.put_nowait('<thr>')
+                return
+            print '#' * 40 + '\nDEBUG\n' + '#' * 40
+            print '\nSETTINGS'
+            pprint(vars(dirs.settings))
+            print '#' * 15
+            print 'CAMERA QUEUE COUNT: {}'.format(self.thread_handler.cmr_device.data_queue.qsize())
+            print '#' * 15
+            print 'ACTIVE PROCESSES: {}'.format(len(multiprocessing.active_children()) + 1)
+            #########################################################
+            main_threads = threading.enumerate()
+            main_threads_list = []
+            main_threads_qfts = 0
+            for i in main_threads:
+                if i.name != 'QueueFeederThread':
+                    main_threads_list.append(i.name)
+                else:
+                    main_threads_qfts += 1
+            print ' - Main Process Threads ({}):'.format(threading.active_count())
+            for i in range(len(main_threads_list)):
+                print '   {} - {}'.format(i + 1, main_threads_list[i])
+            print '     + [{}x] QueueFeederThreads'.format(main_threads_qfts)
+            print ' - {} Threads ({}):'.format(multiprocessing.active_children()[0].name, len(msg))
+            proc_threads_list = []
+            proc_threads_qfts = 0
+            for i in msg:
+                if i[1] != 'QueueFeederThread':
+                    proc_threads_list.append(i[1])
+                else:
+                    proc_threads_qfts += 1
+            for i in range(len(proc_threads_list)):
+                print '   {} - {}'.format(i + 1, proc_threads_list[i])
+            print '     + [{}x] QueueFeederThreads'.format(proc_threads_qfts)
 
     def debug_printing(self):
         """more debug messages"""
-        if self.debug_chk_var.get() == 1:
-            dirs.settings.debug_console = True
-            self.process_dump_queue.put_nowait('<dbon>')
+        if EXECUTABLE:
+            tkMb.showinfo('Attn!', 'Please use'
+                                   ' the Debug Console version of Mouse'
+                                   ' House for this feature.')
+            return
         else:
-            dirs.settings.debug_console = False
-            self.process_dump_queue.put_nowait('<dboff>')
+            if self.debug_chk_var.get() == 1:
+                dirs.settings.debug_console = True
+                self.process_dump_queue.put_nowait('<dbon>')
+            else:
+                dirs.settings.debug_console = False
+                self.process_dump_queue.put_nowait('<dboff>')
 
     def hard_exit(self, allow=True):
         """Handles devices before exiting for a clean close"""
@@ -3803,6 +3816,7 @@ class Directories(object):
         with open(self.user_home + '/settings.mshs', 'rb') as settings_file:
             self.settings = pickle.load(settings_file)
             self.check_dirs()
+        self.settings.debug_console = False
 
     def save(self):
         """Save settings for future use"""
