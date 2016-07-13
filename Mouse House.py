@@ -2,7 +2,7 @@
 """
 For use with LabJack U6, PTGrey FMVU-03MTC-CS, Arduino UNO
 Optional companion files:
-- mouse.icon favicon
+- mouse_rec_icon.ico favicon
 - Pmw.py, PmwBlt.py, PmwColor.py, Setup.py (for building windows .exe)
 """
 import os
@@ -364,7 +364,7 @@ class GUI(object):
     def __init__(self, tcl_root, topmost=True):
         self.root = tcl_root
         try:
-            self.root.wm_iconbitmap('mouse.ico')
+            self.root.wm_iconbitmap('mouse_rec_icon.ico')
         except Tk.TclError:
             pass
         self.root.resizable(width=False, height=False)
@@ -1449,7 +1449,7 @@ class MasterGUI(GUI):
     def __init__(self, master):
         GUI.__init__(self, master, topmost=False)
         self.master = self.root
-        self.master.title('Mouse Recorder')
+        self.master.title('Mouse House')
         # Fonts
         self.time_label_font = tkFont.Font(family='Arial', size=6)
         self.label_font = tkFont.Font(family='Arial', size=10)
