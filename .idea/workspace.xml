@@ -1,12 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="69ed7119-d717-4246-9363-2ad2b6d93e1e" name="Default" comment="formatted debug messages">
-      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/ArduinoCntrl.iml" afterPath="$PROJECT_DIR$/.idea/ArduinoCntrl.iml" />
-      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/dictionaries/Fear_1.xml" afterPath="$PROJECT_DIR$/.idea/dictionaries/Fear_1.xml" />
-      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/misc.xml" afterPath="$PROJECT_DIR$/.idea/misc.xml" />
+    <list default="true" id="69ed7119-d717-4246-9363-2ad2b6d93e1e" name="Default" comment="">
       <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/workspace.xml" afterPath="$PROJECT_DIR$/.idea/workspace.xml" />
-      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/Mouse House.py" afterPath="$PROJECT_DIR$/Mouse House.py" />
     </list>
     <ignored path="ArduinoCntrl.iws" />
     <ignored path=".idea/workspace.xml" />
@@ -39,7 +35,7 @@
       <file leaf-file-name="Mouse House.py" pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/Mouse House.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="168">
+            <state relative-caret-position="312">
               <caret line="2599" column="32" selection-start-line="2599" selection-start-column="32" selection-end-line="2599" selection-end-column="32" />
               <folding>
                 <element signature="e#15#207#1" expanded="false" />
@@ -561,6 +557,7 @@
                 <element signature="e#161527#161597#0" expanded="false" />
                 <element signature="e#162565#162666#0" expanded="false" />
                 <element signature="e#165767#170274#0" expanded="false" />
+                <element signature="e#170427#170942#0" expanded="false" />
                 <element signature="e#170978#171868#0" expanded="false" />
                 <element signature="e#171041#171547#0" expanded="false" />
                 <element signature="e#171589#171868#0" expanded="false" />
@@ -657,7 +654,6 @@
                 <element signature="e#188119#188183#1" expanded="false" />
                 <element signature="e#188199#188324#0" expanded="false" />
                 <element signature="e#188327#188392#0" expanded="false" />
-                <marker date="1468435472485" expanded="false" signature="170418:170942" ph="..." />
               </folding>
             </state>
           </provider>
@@ -1234,7 +1230,14 @@
       <option name="project" value="LOCAL" />
       <updated>1468314436473</updated>
     </task>
-    <option name="localTasksCounter" value="18" />
+    <task id="LOCAL-00018" summary="save names and other tweaks">
+      <created>1468435601992</created>
+      <option name="number" value="00018" />
+      <option name="presentableId" value="LOCAL-00018" />
+      <option name="project" value="LOCAL" />
+      <updated>1468435601992</updated>
+    </task>
+    <option name="localTasksCounter" value="19" />
     <servers />
   </component>
   <component name="ToolWindowManager">
@@ -1247,18 +1250,18 @@
       <window_info id="Database" active="false" anchor="right" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="3" side_tool="false" content_ui="tabs" />
       <window_info id="Python Console" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
       <window_info id="Version Control" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.32845026" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
-      <window_info id="Run" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="true" show_stripe_button="true" weight="0.29520696" sideWeight="0.5" order="2" side_tool="false" content_ui="tabs" />
       <window_info id="Structure" active="false" anchor="left" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.25" sideWeight="0.5" order="1" side_tool="false" content_ui="tabs" />
       <window_info id="Terminal" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
       <window_info id="Favorites" active="false" anchor="left" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="2" side_tool="true" content_ui="tabs" />
-      <window_info id="Debug" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.39707017" sideWeight="0.49583334" order="3" side_tool="false" content_ui="tabs" />
       <window_info id="Cvs" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.25" sideWeight="0.5" order="4" side_tool="false" content_ui="tabs" />
       <window_info id="Message" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="0" side_tool="false" content_ui="tabs" />
       <window_info id="Commander" active="false" anchor="right" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.4" sideWeight="0.5" order="0" side_tool="false" content_ui="tabs" />
       <window_info id="Inspection" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.4" sideWeight="0.5" order="5" side_tool="false" content_ui="tabs" />
+      <window_info id="Run" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.29520696" sideWeight="0.5" order="2" side_tool="false" content_ui="tabs" />
       <window_info id="Hierarchy" active="false" anchor="right" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.25" sideWeight="0.5" order="2" side_tool="false" content_ui="combo" />
       <window_info id="Find" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.32845026" sideWeight="0.5" order="1" side_tool="false" content_ui="tabs" />
       <window_info id="Ant Build" active="false" anchor="right" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.25" sideWeight="0.5" order="1" side_tool="false" content_ui="tabs" />
+      <window_info id="Debug" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.39707017" sideWeight="0.49583334" order="3" side_tool="false" content_ui="tabs" />
     </layout>
     <layout-to-restore>
       <window_info id="TODO" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="6" side_tool="false" content_ui="tabs" />
@@ -1307,7 +1310,8 @@
     <MESSAGE value="before implement multiprocessing" />
     <MESSAGE value="implemented multiprocessing successfully" />
     <MESSAGE value="formatted debug messages" />
-    <option name="LAST_COMMIT_MESSAGE" value="formatted debug messages" />
+    <MESSAGE value="save names and other tweaks" />
+    <option name="LAST_COMMIT_MESSAGE" value="save names and other tweaks" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
@@ -1377,7 +1381,7 @@
     <entry file="file://$PROJECT_DIR$/guitest.py" />
     <entry file="file://$PROJECT_DIR$/Mouse House.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="168">
+        <state relative-caret-position="312">
           <caret line="2599" column="32" selection-start-line="2599" selection-start-column="32" selection-end-line="2599" selection-end-column="32" />
           <folding>
             <element signature="e#15#207#1" expanded="false" />
@@ -1899,6 +1903,7 @@
             <element signature="e#161527#161597#0" expanded="false" />
             <element signature="e#162565#162666#0" expanded="false" />
             <element signature="e#165767#170274#0" expanded="false" />
+            <element signature="e#170427#170942#0" expanded="false" />
             <element signature="e#170978#171868#0" expanded="false" />
             <element signature="e#171041#171547#0" expanded="false" />
             <element signature="e#171589#171868#0" expanded="false" />
@@ -1995,7 +2000,6 @@
             <element signature="e#188119#188183#1" expanded="false" />
             <element signature="e#188199#188324#0" expanded="false" />
             <element signature="e#188327#188392#0" expanded="false" />
-            <marker date="1468435472485" expanded="false" signature="170418:170942" ph="..." />
           </folding>
         </state>
       </provider>
