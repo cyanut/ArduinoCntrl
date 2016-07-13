@@ -3331,6 +3331,11 @@ class LabJackU6(u6.U6):
         except ZeroDivisionError:
             exp_smpl_freq = 0
         exp_scan_freq = exp_smpl_freq / self.n_ch
+        # we'll send some information to the file write now
+        self.missed_queue.put_nowait([datacount_hold[0], datacount_hold[1], datacount_hold[2], total_samples,
+                                      before_run_time, run_time, after_run_time, total_run_time,
+                                      missed_before, missed_during, missed_after, missed_total,
+                                      exp_smpl_freq, overall_smpl_freq, exp_scan_freq, overall_scan_freq])
         self.master_gui_dump_queue.put_nowait('<ljr>{},{},{},{},{},{},{},{},{},{},{},{},n/a,{},n/a,{},n/a,{},n/a,{}'
                                               ''.format(float(before_run_time) / 1000,
                                                         float(run_time) / 1000, float(after_run_time) / 1000,
@@ -3378,6 +3383,39 @@ class LabJackU6(u6.U6):
                     if not self.running:
                         break
             self.missed_queue.put_nowait(missed_list)
+        # block until we hear back from streamer
+        msg = self.missed_queue.get()
+        (smpls_before, smpls_during, smpls_after, total_samples,
+         before_run_time, run_time, after_run_time, total_run_time,
+         missed_before, missed_during, missed_after, missed_total,
+         exp_smpl_freq, overall_smpl_freq, exp_scan_freq, overall_scan_freq) = msg
+        if main.fp_toggle_var.get() == 1:
+            ch_num = dirs.settings.fp_last_used['ch_num']
+            main_freq = dirs.settings.fp_last_used['main_freq']
+            isos_freq = dirs.settings.fp_last_used['isos_freq']
+            top_line = ' , BEFORE EXP, DURING EXP, AFTER EXP, TOTAL, ' \
+                       'DATA CH, MAIN REF CH, ISOS REF CH, ' \
+                       'MAIN REF FREQ, ISOS REF FREQ,\n'
+            time_line = 'TIME (s),{},{},{},{},{},{},{},{},{},\n'.format(before_run_time, run_time,
+                                                                        after_run_time, total_run_time,
+                                                                        ch_num[0], ch_num[1], ch_num[2],
+                                                                        main_freq, isos_freq)
+        else:
+            top_line = ', BEFORE EXP, DURING EXP, AFTER EXP, TOTAL,\n'
+            time_line = 'TIME (s),{},{},{},{},\n'.format(before_run_time, run_time,
+                                                         after_run_time, total_run_time)
+        samples_line = 'SAMPLES TAKEN, {},{},{},{},\n'.format(smpls_before, smpls_during, smpls_after,
+                                                              total_samples)
+        smpls_missed_line = 'SAMPLES MISSED,{},{},{},{},\n'.format(missed_before, missed_during,
+                                                                   missed_after, missed_total)
+        smpl_freq_line = 'SAMPLING FREQ (Hz), ,{}, ,{},\n'.format(exp_smpl_freq, overall_smpl_freq)
+        scan_freq_line = 'SCAN FREQ (hz), ,{}, ,{},\n'.format(exp_scan_freq, overall_scan_freq)
+        # now put it at the top of the file
+        to_write = top_line + time_line + samples_line + smpls_missed_line + smpl_freq_line + scan_freq_line
+        with file(results_dir + save_file_name + '.csv') as original:
+            data = original.read()
+        with file(results_dir + save_file_name + '.csv', 'w') as new:
+            new.write(to_write + data)
 
 
 class FireFly(object):
