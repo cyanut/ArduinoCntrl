@@ -243,7 +243,7 @@ class ProgressBar(object):
             if self.num_prog > 1000 or self.time_diff > float(self.ms_total_time / 1000):
                 self.running = False
                 return self.running
-            self.master.after(10, self.advance)
+            self.master.after(40, self.advance)
 
     def stop(self):
         """Stops the progress bar"""
@@ -284,7 +284,7 @@ class LiveGraph(Tk.Frame):
         for i in range(8):
             self.lines.append(self.line_canvas.create_line(0, 27 + 27 * i, 0, 27 + 27 * i,
                                                            fill=self.color_scheme[i],
-                                                           width=1.3, smooth=True))
+                                                           width=1.3))
 
     def clear_plot(self):
         """clears existing lines on the graph"""
@@ -294,7 +294,7 @@ class LiveGraph(Tk.Frame):
     def update_labels(self):
         """updates lj channel labels"""
         lj_ch_num = deepcopy(dirs.settings.lj_last_used['ch_num'])
-        lj_ch_num = lj_ch_num[::-1]
+        # lj_ch_num = lj_ch_num[::-1]
         for i in range(8):
             self.line_labels[i].set('')
         for i in range(len(lj_ch_num)):
@@ -2332,7 +2332,7 @@ class MasterGUI(GUI):
     # noinspection PyAttributeOutsideInit
     def ard_grab_data(self, destroy=False, load=False):
         """Obtain arduino data from saves"""
-        # If load is false, then we load from settings.frcl
+        # If load is false, then we load from settings.mshs
         if load is not False:
             # Then load must be a preset name.
             dirs.settings.ard_last_used = deepcopy(dirs.settings.ard_presets[load])
@@ -3684,19 +3684,19 @@ class ArduinoUno(object):
 # Directories and Saves
 class Directories(object):
     """File Formats:
-    .frcl: Main Settings Pickle
+    .mshs: Main Settings Pickle
     .csv: Standard comma separated file for data output"""
 
     def __init__(self):
         self.lock = threading.Lock()
         self.user_home = os.path.expanduser('~')
-        self.main_save_dir = self.user_home + '/desktop/frCntrlSaves/'
+        self.main_save_dir = self.user_home + '/desktop/Mouse House Saves/'
         self.results_dir = ''
         self.save_on_exit = True
         self.settings = MainSettings()
-        if not os.path.isfile(self.user_home + '/frSettings.frcl'):
+        if not os.path.isfile(self.user_home + '/settings.mshs'):
             # Create Settings file if does not exist
-            with open(self.user_home + '/frSettings.frcl', 'wb') as f:
+            with open(self.user_home + '/settings.mshs', 'wb') as f:
                 # Put in some example settings and presets
                 self.settings.load_examples()
                 pickle.dump(self.settings, f)
@@ -3705,13 +3705,13 @@ class Directories(object):
 
     def load(self):
         """Load last used settings"""
-        with open(self.user_home + '/frSettings.frcl', 'rb') as settings_file:
+        with open(self.user_home + '/settings.mshs', 'rb') as settings_file:
             self.settings = pickle.load(settings_file)
             self.check_dirs()
 
     def save(self):
         """Save settings for future use"""
-        with open(self.user_home + '/frSettings.frcl', 'wb') as settings_file:
+        with open(self.user_home + '/settings.mshs', 'wb') as settings_file:
             pickle.dump(self.settings, settings_file)
 
     def check_dirs(self):
@@ -3723,8 +3723,8 @@ class Directories(object):
 
     def clear_saves(self):
         """Removes settings and save directories"""
-        shutil.rmtree(self.user_home + '/desktop/frCntrlSaves/')
-        os.remove(self.user_home + '/frSettings.frcl')
+        shutil.rmtree(self.user_home + '/desktop/Mouse House Saves/')
+        os.remove(self.user_home + '/settings.mshs')
 
     def threadsafe_edit(self, recipient, donor, name=None):
         """Edits settings in a threadsafe manner"""
