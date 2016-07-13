@@ -6,37 +6,32 @@ Optional companion files:
 - Pmw.py, PmwBlt.py, PmwColor.py, Setup.py (for building windows .exe)
 """
 import os
+import u6
 import ast
 import sys
+import Pmw
 import time
 import math
 import glob
 import Queue
+import tkFont
 import serial
 import shutil
 import pickle
 import calendar
 import threading
+import numpy as np
+import Tkinter as Tk
 import multiprocessing
 from struct import pack
 from pprint import pprint
 from copy import deepcopy
-from datetime import datetime
-from operator import itemgetter
-
-import u6
-import Pmw
-import tkFont
-import numpy as np
-import Tkinter as Tk
-# noinspection PyUnresolvedReferences
 import flycapture2a as fc2
 import tkMessageBox as tkMb
-# noinspection PyPackageRequirements
+from datetime import datetime
+from operator import itemgetter
 from PIL.ImageTk import Image, PhotoImage
-# noinspection PyPackageRequirements
 from LabJackPython import LowlevelErrorException, LabJackException
-
 
 ################################################################
 # To do list:
