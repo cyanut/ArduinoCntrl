@@ -1552,7 +1552,7 @@ class MasterGUI(GUI):
         self.chosen_dir_var = Tk.StringVar()
         self.save_status_var.set('Last Used Save Dir.:'
                                  '\n[{}]'.format(lim_str_len(dirs.settings.save_dir.upper(), 30)))
-        self.chosen_dir_var.set('{: <80}'.format(dirs.settings.save_dir))
+        self.chosen_dir_var.set('{: <30}'.format(dirs.settings.save_dir))
         if len(self.save_dir_list) == 0:
             self.save_dir_menu = Tk.OptionMenu(existing_frame,
                                                self.chosen_dir_var, ' ' * 15)
