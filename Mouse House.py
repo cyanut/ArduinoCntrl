@@ -243,7 +243,11 @@ class ProgressBar(object):
             if self.num_prog > 1000 or self.time_diff > float(self.ms_total_time / 1000):
                 self.running = False
                 return self.running
-            self.master.after(40, self.advance)
+            if self.ms_total_time < 120000:
+                advance_by = 15
+            else:
+                advance_by = 30
+            self.master.after(advance_by, self.advance)
 
     def stop(self):
         """Stops the progress bar"""
@@ -260,7 +264,7 @@ class LiveGraph(Tk.Frame):
         self.color_scheme = ['#FF7F00', '#003643', '#F10026', '#3BDA00',
                              '#6C3600', '#3EB7D3', '#F94461', '#195D00']
         # graph lines
-        self.line_canvas = Tk.Canvas(self, background='#EFEFEF', height=216, width=580)
+        self.line_canvas = Tk.Canvas(self, background='#EFEFEF', height=216, width=610)
         self.line_canvas.grid(column=1, row=0, rowspan=8)
         self.line_canvas.grid_rowconfigure(0, weight=1, uniform='x')
         # line labels
@@ -271,7 +275,7 @@ class LiveGraph(Tk.Frame):
             label.grid_rowconfigure(0, weight=1, uniform='x')
             self.line_labels[i].set('')
         # frame holder line
-        self.line_canvas.create_line(50, 0, 50, 580, fill='#EFEFEF', width=2)
+        self.line_canvas.create_line(50, 0, 50, 216, fill='#EFEFEF', width=2)
         # setup
         self.lines = []
         self.update_labels()
@@ -1467,8 +1471,11 @@ class MasterGUI(GUI):
         self.process_dump_queue = PROCESS_DUMP_QUEUE
         ###########################
         # Save variables
+        # directories
         self.save_dir_name_used = []
         self.results_dir_used = {}
+        # file name
+        self.data_save_count = 0
         # Arduino config variables
         self.ttl_time = dirs.settings.ard_last_used['packet'][3]
         ###########################
@@ -1586,16 +1593,28 @@ class MasterGUI(GUI):
         self.lj_config_button = Tk.Button(frame, text='CONFIG',
                                           command=self.lj_config)
         self.lj_config_button.pack(side=Tk.BOTTOM, expand=True)
+        # bottom frame containing live graph, report, and naming
+        frame = Tk.Frame(self.master)
+        frame.grid(row=3, column=1, sticky=self.ALL)
         # Post experiment LabJack report frame
-        report_frame = Tk.LabelFrame(self.master, text='LabJack Stream Data (20 Hz Scanning)')
-        report_frame.grid(row=3, column=1, sticky=self.ALL)
-        # labjack stream and post exp report items
-        Tk.Label(report_frame, text='\nPost Experiment Report\n').grid(row=0, column=3, sticky=self.ALL)
-        self.lj_table = SimpleTable(report_frame, 6, 5, highlight_column=2, highlight_color='#72ab97')
-        self.lj_table.grid(row=1, column=3, sticky=self.ALL)
+        stream_frame = Tk.LabelFrame(frame, text='LabJack Stream (20 Hz Scanning)')
+        stream_frame.grid(row=0, column=1, rowspan=2, sticky=self.ALL)
+        table_frame = Tk.LabelFrame(frame, text='')
+        table_frame.grid(row=1, column=0, sticky=Tk.S)
+        name_trial_frame = Tk.LabelFrame(frame, text='Optional: Give the Next Trial a Name')
+        name_trial_frame.grid(row=0, column=0, sticky=self.ALL)
+        # naming
+        self.name_entry = Tk.Entry(name_trial_frame, width=52)
+        self.name_entry.grid(sticky=self.ALL)
+        # report etc
+        Tk.Label(table_frame, text='Post Experiment LabJack Report',
+                 font=tkFont.Font(family='Arial', size='8')).grid(row=1, column=0, sticky=self.ALL)
+        self.lj_table = SimpleTable(table_frame, 6, 5, highlight_column=2, highlight_color='#72ab97')
+        self.lj_table.grid(row=2, column=0, sticky=self.ALL)
         self.lj_report_table_config()
-        self.lj_graph = LiveGraph(report_frame)
-        self.lj_graph.grid(row=0, column=1, columnspan=2, rowspan=1000, sticky=self.ALL)
+        # labjack stream
+        self.lj_graph = LiveGraph(stream_frame)
+        self.lj_graph.grid(sticky=self.ALL)
 
     # noinspection PyAttributeOutsideInit
     def render_arduino(self):
@@ -2143,6 +2162,7 @@ class MasterGUI(GUI):
     def fp_toggle(self):
         """Toggles Photometry options On or Off"""
         if self.fp_toggle_var.get() == 1:
+            self.process_dump_queue.put_nowait('<fpon>')
             self.fp_config_button.config(state=Tk.NORMAL)
             ch_num, main_freq, isos_freq = dirs.settings.quick_fp()
             state = 'LabJack Channels: {}\nMain Freq: {}Hz\nIsos Freq: {}Hz'.format(ch_num,
@@ -2151,6 +2171,7 @@ class MasterGUI(GUI):
             self.fp_statustext_var.set(state)
             self.fp_lj_sync()
         elif self.fp_toggle_var.get() == 0:
+            self.process_dump_queue.put_nowait('<fpoff>')
             shared_ch = deepcopy([i for i in dirs.settings.fp_last_used['ch_num']
                                   if i in dirs.settings.lj_last_used['ch_num']])
             if len(shared_ch) == 3:
@@ -2573,6 +2594,12 @@ class MasterGUI(GUI):
                           'You must first create a directory to save data output.',
                           parent=self.master)
             return
+        # save file naming
+        file_name = self.name_entry.get().strip()
+        if file_name == '':
+            file_name = 'no_name'
+        file_name_to_send = '{}-{}'.format(self.data_save_count, file_name)
+        self.data_save_count += 1
         # Make sure we actually have a place to save files:
         if len(self.results_dir_used) == 0:
             self.preresults_dir = str(dirs.main_save_dir) + dirs.settings.save_dir + '/'
@@ -2587,10 +2614,12 @@ class MasterGUI(GUI):
             self.save_grab_list()
         # Run
         run_msg = '<run>'
+        self.thread_dump_queue.put_nowait('<sfn>{}'.format(file_name_to_send))
         self.thread_dump_queue.put_nowait(run_msg)
         self.process_dump_queue.put_nowait(run_msg)
         self.process_dump_queue.put_nowait(dirs.settings)
         self.process_dump_queue.put_nowait(dirs.results_dir)
+        self.process_dump_queue.put_nowait(file_name_to_send)
         self.save_status_bar.set('Started.')
         self.run_bulk_toggle(running=True)
 
@@ -2692,6 +2721,8 @@ class GUIThreadHandler(threading.Thread):
         self.hard_stop_experiment = False
         self.exp_is_running = False
         self.running = True
+        # file name handling
+        self.save_file_name = ''
 
     def run(self):
         """Periodically processes queue instructions from
@@ -2726,6 +2757,7 @@ class GUIThreadHandler(threading.Thread):
                     if self.devices_created and all(self.check_connections()):
                         # devices needed are connected. start exp
                         if self.cmr_use:
+                            self.cmr_device.save_file_name = self.save_file_name
                             self.cmr_device.recording = True
                         if self.lj_use:
                             self.lj_running = True
@@ -2739,6 +2771,8 @@ class GUIThreadHandler(threading.Thread):
                     else:
                         self.master_dump_queue.put_nowait('<exp_end>*** Failed to Initiate '
                                                           'one of the selected devices.')
+                elif msg.startswith('<sfn>'):
+                    self.save_file_name = msg[5:]
                 elif msg == '<hardstop>':
                     self.hard_stop_experiment = True
                     try:
@@ -2919,6 +2953,10 @@ class LJProcessHandler(multiprocessing.Process):
         # Grab settings from main process
         self.settings = None
         self.results_dir = None
+        # fp settings for save purposes
+        self.fp_used = False
+        # save file name
+        self.file_name = ''
 
     def run(self):
         """periodically checks for instructions from
@@ -2935,6 +2973,7 @@ class LJProcessHandler(multiprocessing.Process):
                     # grab dirs.settings from main process
                     self.settings = self.process_dump_queue.get()
                     self.results_dir = self.process_dump_queue.get()
+                    self.file_name = self.process_dump_queue.get()
                     self.create_lj()
                     if self.lj_created and self.check_lj_connected():
                         if self.lj_use:
@@ -2943,7 +2982,7 @@ class LJProcessHandler(multiprocessing.Process):
                                                                 name='LabJack Stream')
                             lj_stream_thread.daemon = True
                             lj_write_thread = threading.Thread(target=self.lj_device.data_write_plot,
-                                                               args=(self.results_dir,),
+                                                               args=(self.results_dir, self.fp_used, self.file_name),
                                                                name='LabJack Data Write')
                             lj_write_thread.daemon = True
                             lj_write_thread.start()
@@ -2971,6 +3010,10 @@ class LJProcessHandler(multiprocessing.Process):
                     self.settings.debug_console = False
                 elif msg == '<exit>':
                     self.close_lj()
+                elif msg == '<fpon>':
+                    self.fp_used = True
+                elif msg == '<fpoff>':
+                    self.fp_used = False
                 elif msg == '<thr>':
                     threads = threading.enumerate()
                     thread_list = []
@@ -3075,7 +3118,7 @@ class LabJackU6(u6.U6):
         self.lj_exp_ready_lock = lj_exp_ready_lock
         # Queues for own use
         self.data_queue = Queue.Queue()  # data from stream to write
-        self.missed_queue = Queue.Queue()
+        self.stream_pipe, self.writer_pipe = multiprocessing.Pipe()
         # dumps small reports (post-exp and missed values) to master gui
         self.master_gui_dump_queue = master_dump_queue
         self.master_gui_graph_queue = master_graph_queue
@@ -3297,7 +3340,7 @@ class LabJackU6(u6.U6):
         self.lj_exp_ready_lock.clear()
         ####################################################################
         # now we do some reporting
-        missed_list_msg = self.missed_queue.get()
+        missed_list_msg = self.stream_pipe.recv()
         # samples taken for each interval:
         multiplier = self.packetsPerRequest * self.streamSamplesPerPacket
         datacount_hold = (np.asarray(datacount_hold)) * multiplier
@@ -3332,24 +3375,21 @@ class LabJackU6(u6.U6):
             exp_smpl_freq = 0
         exp_scan_freq = exp_smpl_freq / self.n_ch
         # we'll send some information to the file write now
-        self.missed_queue.put_nowait([datacount_hold[0], datacount_hold[1], datacount_hold[2], total_samples,
-                                      before_run_time, run_time, after_run_time, total_run_time,
-                                      missed_before, missed_during, missed_after, missed_total,
-                                      exp_smpl_freq, overall_smpl_freq, exp_scan_freq, overall_scan_freq])
-        self.master_gui_dump_queue.put_nowait('<ljr>{},{},{},{},{},{},{},{},{},{},{},{},n/a,{},n/a,{},n/a,{},n/a,{}'
-                                              ''.format(float(before_run_time) / 1000,
-                                                        float(run_time) / 1000, float(after_run_time) / 1000,
-                                                        float(total_run_time) / 1000,
-                                                        datacount_hold[0], datacount_hold[1], datacount_hold[2],
-                                                        total_samples, missed_before, missed_during, missed_after,
-                                                        missed_total, exp_smpl_freq, overall_smpl_freq, exp_scan_freq,
-                                                        overall_scan_freq))
+        post_exp_info = '{},{},{},{},{},{},{},{},{},{},{},{},n/a,{},n/a,{},n/a,{},n/a,{}' \
+                        ''.format(float(before_run_time) / 1000,
+                                  float(run_time) / 1000, float(after_run_time) / 1000,
+                                  float(total_run_time) / 1000,
+                                  datacount_hold[0], datacount_hold[1], datacount_hold[2],
+                                  total_samples, missed_before, missed_during, missed_after,
+                                  missed_total, exp_smpl_freq, overall_smpl_freq, exp_scan_freq,
+                                  overall_scan_freq)
+        self.stream_pipe.send(post_exp_info)
+        self.master_gui_dump_queue.put('<ljr>' + post_exp_info)
 
-    def data_write_plot(self, results_dir):
+    def data_write_plot(self, results_dir, fp_used, save_name):
         """Reads from data queue and writes to file/plots"""
-        self.missed_queue.queue.clear()
         missed_total, missed_list = 0, []
-        save_file_name = '[name]--{}'.format(format_daytime(options='daytime'))
+        save_file_name = '[{}]--{}'.format(save_name, format_daytime(options='daytime'))
         with open(results_dir + save_file_name + '.csv', 'w') as save_file:
             for i in range(self.n_ch):
                 save_file.write('AIN{},'.format(self.ch_num[i]))
@@ -3382,17 +3422,20 @@ class LabJackU6(u6.U6):
                     data_to_master_counter += 1
                     if not self.running:
                         break
-            self.missed_queue.put_nowait(missed_list)
+            self.writer_pipe.send(missed_list)
         # block until we hear back from streamer
-        msg = self.missed_queue.get()
-        (smpls_before, smpls_during, smpls_after, total_samples,
-         before_run_time, run_time, after_run_time, total_run_time,
+        msg = self.writer_pipe.recv().split(',')
+        for i in msg:
+            if i == 'n/a':
+                msg.remove(i)
+        (before_run_time, run_time, after_run_time, total_run_time,
+         smpls_before, smpls_during, smpls_after, total_samples,
          missed_before, missed_during, missed_after, missed_total,
          exp_smpl_freq, overall_smpl_freq, exp_scan_freq, overall_scan_freq) = msg
-        if main.fp_toggle_var.get() == 1:
-            ch_num = dirs.settings.fp_last_used['ch_num']
-            main_freq = dirs.settings.fp_last_used['main_freq']
-            isos_freq = dirs.settings.fp_last_used['isos_freq']
+        if fp_used:
+            ch_num = self.settings.fp_last_used['ch_num']
+            main_freq = self.settings.fp_last_used['main_freq']
+            isos_freq = self.settings.fp_last_used['isos_freq']
             top_line = ' , BEFORE EXP, DURING EXP, AFTER EXP, TOTAL, ' \
                        'DATA CH, MAIN REF CH, ISOS REF CH, ' \
                        'MAIN REF FREQ, ISOS REF FREQ,\n'
@@ -3435,6 +3478,7 @@ class FireFly(object):
         self.recording = False
         self.hard_stopped = False
         self.frame = None
+        self.save_file_name = ''
 
     def initialize(self):
         """checks that camera is available"""
@@ -3475,7 +3519,8 @@ class FireFly(object):
 
     def record_video(self):
         """records video"""
-        self.context.openAVI(dirs.results_dir + '[name]--{}.avi'.format(format_daytime(options='daytime')),
+        self.context.openAVI(dirs.results_dir + '[{}]--{}.avi'.format(self.save_file_name,
+                                                                      format_daytime(options='daytime')),
                              30, 1000000)
         num_frames = int(dirs.settings.ard_last_used['packet'][3] * 30) / 1000
         self.ard_ready_lock.wait()
