@@ -262,43 +262,48 @@ class LiveGraph(Tk.Frame):
     def __init__(self, *args, **kwargs):
         # noinspection PyTypeChecker,PyCallByClass
         Tk.Frame.__init__(self, *args, **kwargs)
+        self.color_scheme = ['#FF7F00', '#003643', '#F10026', '#3BDA00',
+                             '#6C3600', '#3EB7D3', '#F94461', '#195D00']
+        # graph lines
         self.line_canvas = Tk.Canvas(self, background='#EFEFEF', height=216, width=580)
-        self.line_canvas.grid(column=1, row=0)
+        self.line_canvas.grid(column=1, row=0, rowspan=8)
         self.line_canvas.grid_rowconfigure(0, weight=1, uniform='x')
-        self.label_canvas = Tk.Canvas(self, background='#EFEFEF', height=216, width=20)
-        self.label_canvas.grid(column=0, row=0)
-        self.label_canvas.grid_rowconfigure(1, weight=1, uniform='x')
-        # color scheme
-        self.color_scheme = ['#60B388', '#D6730F', '#331714', '#4894AC',
-                             '#B05A9A', '#31527D', '#AD8488', '#B5120B']
-        self.lines = None
-        self.line_labels = None
+        # line labels
+        self.line_labels = deepcopy_lists(outer=1, inner=8, populate=Tk.StringVar)
+        for i in range(8):
+            label = Tk.Label(self, textvariable=self.line_labels[i], fg=self.color_scheme[i])
+            label.grid(column=0, row=i)
+            label.grid_rowconfigure(0, weight=1, uniform='x')
+            self.line_labels[i].set('')
+        # frame holder line
+        self.line_canvas.create_line(50, 0, 50, 580, fill='#EFEFEF', width=2)
+        # setup
+        self.lines = []
+        self.update_labels()
         self.create_new_lines()
 
     def create_new_lines(self):
         """creates 8 lines, corresponding to the 8 max channels on
         labjack"""
         self.lines = []
-        self.line_labels = []
-        lj_ch_num = deepcopy(dirs.settings.lj_last_used['ch_num'])
-        lj_ch_num = lj_ch_num[::-1]
         for i in range(8):
-            self.lines.append(self.line_canvas.create_line(0, 27 * i, 0, 27 * i, fill=self.color_scheme[i],
+            self.lines.append(self.line_canvas.create_line(0, 27 + 27 * i, 0, 27 + 27 * i,
+                                                           fill=self.color_scheme[i],
                                                            width=1.3, smooth=True))
-        reverse_colors = (deepcopy(self.color_scheme)[:len(lj_ch_num)])[::-1]
-        for i in range(len(lj_ch_num)):
-            self.line_labels.append(self.label_canvas.create_text(1, 27 * i + 8, anchor=Tk.NW,
-                                                                  fill=reverse_colors[i],
-                                                                  text='{:0>2}'.format(lj_ch_num[i]),
-                                                                  font=tkFont.Font(family='Arial', size=7,
-                                                                                   weight=tkFont.BOLD)))
 
     def clear_plot(self):
         """clears existing lines on the graph"""
         for i in range(8):
             self.line_canvas.delete(self.lines[i])
-        for i in self.line_labels:
-            self.label_canvas.delete(i)
+
+    def update_labels(self):
+        """updates lj channel labels"""
+        lj_ch_num = deepcopy(dirs.settings.lj_last_used['ch_num'])
+        lj_ch_num = lj_ch_num[::-1]
+        for i in range(8):
+            self.line_labels[i].set('')
+        for i in range(len(lj_ch_num)):
+            self.line_labels[i].set('{:0>2}'.format(lj_ch_num[i]))
 
     def update_plot(self, *args):
         """Updates data on the plot"""
@@ -2121,6 +2126,7 @@ class MasterGUI(GUI):
         channels, freq = dirs.settings.quick_lj()
         self.lj_status_var.set('Channels:\n{}\n'
                                '\nScan Freq: [{}Hz]'.format(channels, freq))
+        self.lj_graph.update_labels()
 
     def lj_graph_stream(self):
         """streams data from labjack"""
@@ -3371,7 +3377,7 @@ class LabJackU6(u6.U6):
                 if time_diff(self.time_start_read) / data_to_master_counter >= 50:
                     to_send = []
                     for i in range(self.n_ch):
-                        to_send.append((r['AIN{}'.format(self.ch_num[i])][0]) * (-27) / 5 + (-27) * (i - 1.5))
+                        to_send.append((r['AIN{}'.format(self.ch_num[i])][0]) * (-27) / 5 + (27 + 27 * i))
                     self.master_gui_graph_queue.put_nowait(to_send)
                     data_to_master_counter += 1
                     if not self.running:
