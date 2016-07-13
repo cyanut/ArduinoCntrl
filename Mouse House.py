@@ -54,6 +54,10 @@ LJ_READ_READY_LOCK = multiprocessing.Event()
 LJ_EXP_READY_LOCK = multiprocessing.Event()
 ARD_READY_LOCK = multiprocessing.Event()
 CMR_READY_LOCK = multiprocessing.Event()
+# forbidden characters for file naming
+FORBIDDEN_CHARS = ['#', '<', '>', '$', '+', '%', '!', '`',
+                   '&', '*', '\'', '|', '{', '}', '?', '"',
+                   '=', '/', ':', '\\', '@']
 ###################################################################
 
 
@@ -2069,7 +2073,11 @@ class MasterGUI(GUI):
         self.save_grab_list()
         ready = 0
         if new:
-            new_save_entry = self.new_save_entry.get().strip().lower()
+            new_save_entry = self.new_save_entry.get().lower()
+            for i in new_save_entry:
+                if i in FORBIDDEN_CHARS:
+                    new_save_entry = new_save_entry.replace(i, ' ')
+            new_save_entry = new_save_entry.strip()
             if new_save_entry in self.save_dir_list or new_save_entry in self.save_dir_name_used:
                 tkMb.showinfo('Error',
                               'You cannot use an existing '
@@ -2596,8 +2604,12 @@ class MasterGUI(GUI):
             return
         # save file naming
         file_name = self.name_entry.get().strip()
+        for i in file_name:
+            if i in FORBIDDEN_CHARS:
+                file_name = file_name.replace(i, ' ')
         if file_name == '':
             file_name = 'no_name'
+        file_name = file_name.strip()
         file_name_to_send = '{}-{}'.format(self.data_save_count, file_name)
         self.data_save_count += 1
         # Make sure we actually have a place to save files:
